@@ -1,26 +1,25 @@
 # Proposal: an AI layer for Textures
 
 **Status:** proposal, nothing implemented yet.
-**Target model:** `claude-opus-5` (vision + structured outputs), with `claude-sonnet-5` on the cheap passes.
+**Target model:** `claude-opus-5` (vision + structured outputs).
 
 ---
 
 ## 1. What is actually wrong with the current draft
 
-The engine is open-loop. Pixels go in, statistics come out, deterministic rules turn
-those statistics into ~30 CSS variables, and **nothing ever looks at the result**. The
-pipeline has no idea whether the page it produced resembles the thing you pointed the
-camera at. That is the whole gap, and it explains the symptom in the brief: colour
-lands, everything else is approximate.
+Pixels go in, statistics come out, deterministic rules turn those statistics into ~30
+CSS variables. The measurements are honest and the colour work is real — that part
+lands. What's missing is a layer that knows what the measurements *mean*, and a whole
+output dimension the engine never touches at all.
 
-Four concrete consequences, each traceable to a specific place in the code:
+Four concrete gaps, each traceable to a place in the code:
 
 **No semantics.** `lib/analyze.ts` knows roughness is 0.61 and orthogonality is 0.44.
 It does not know it is looking at a rusted bolt rather than a slice of sourdough. Those
 two subjects can land within noise of each other on every measured axis and still imply
 completely different interfaces. Every classifier downstream —
-`classifyGeometry`, `classifyFinish`, `classifyVoice`, `classifyPattern` — is guessing
-at meaning from proxies.
+`classifyGeometry`, `classifyFinish`, `classifyVoice`, `classifyPattern` — is inferring
+meaning from proxies.
 
 **Role assignment is naive.** `buildPalette` sorts swatches by `vividness()` and takes
 `ranked[0]` as primary (`lib/synthesize.ts:127`). A red inspection sticker on a grey
@@ -29,60 +28,60 @@ region* are frequently different things, and only one of them should drive the b
 colour. There is also no notion of proportion — nothing decides that the rust orange
 should be a 5% accent rather than the button fill.
 
-**Layout cannot respond at all.** `components/GeneratedSite.tsx` is deliberately static,
-which is the right call for colour and radius — but it means the hero is always
-left-aligned, the stats are always three cards, the features are always
-`md:grid-cols-3`, the image is always `aspect-[4/3]`, and the sections are always in the
-same order. Two captures produce the same product recoloured. The brief says the *web
-layout* should match; today it structurally cannot.
+**The page doesn't move.** Everything the engine produces is static except a 34-second
+mesh drift and CSS transitions on the morph clock. But motion is one of the most direct
+material cues there is: a wavy, specular surface *shimmers*, a granular high-contrast
+one *glitches*, a soft organic one *drifts*. The engine measures specularity,
+roughness, granularity, dynamic range and periodicity — every signal needed to decide
+how a page should move — and then throws all of it at surface opacity and blur radius.
+This is the largest unused output in the system.
 
-**Confidence is a fudge.** `lib/synthesize.ts:557` computes confidence from edge density
-and colourfulness — a proxy for "was there stuff in the frame", not for "did we
-understand it". The inspector reports a number that means very little.
+**Layout structurally cannot respond.** `components/GeneratedSite.tsx` is static by
+design, which is right for colour and radius — but it means the hero is always
+left-aligned, features are always `md:grid-cols-3`, the image is always `aspect-[4/3]`,
+and the sections are always in one order. Two captures produce the same product
+recoloured.
 
 ---
 
 ## 2. The core idea
 
-Add a model that (a) **reads the photograph semantically** and (b) **looks at the
-rendered page and compares it back to the photograph**. Everything else in this
-proposal follows from those two moves.
-
-The second one is the important one and the one nobody builds. A render-and-critique
-loop is the difference between "the engine emitted plausible tokens" and "the page
-looks like the object".
+**One model call, image in, tokens out.** The model looks at the photograph and the
+measurements, and returns a structured refinement of the design tokens — including a
+motion character. It never sees the rendered page, never writes CSS, and never invents
+a colour.
 
 ```
-                  ┌──────────────────────── instant, offline, unchanged ─────────────┐
-  capture ──────▶ │ extractPixels → analyzeImage → synthesize → applyTokens          │──▶ painted
-                  └──────────────────────────────────────────────────────────────────┘
-                          │                                            ▲
-                          │ analysis numbers + 512px buffer            │ TokenPatch
-                          ▼                                            │
-                  ┌─────────────────┐    ┌──────────────┐    ┌─────────┴─────────┐
-                  │ PASS 1  read    │───▶│  validate +  │───▶│  PASS 2  critique │
-                  │ the subject     │    │  clamp +     │    │  render vs source │
-                  └─────────────────┘    │  contrast    │    └───────────────────┘
-                                         │  guards      │              ▲  │
-                                         └──────────────┘              └──┘
-                                                                     ≤2 rounds
+                  ┌──────────────────── instant, offline, unchanged ────────────────┐
+  capture ──────▶ │ extractPixels → analyzeImage → synthesize → applyTokens         │──▶ painted
+                  └────────────────────────────────────────────────────────────────┘
+                          │                                             ▲
+                          │ 512px buffer + analysis numbers             │ TokenPatch
+                          ▼                                             │
+                  ┌──────────────────┐    ┌──────────────────────────────┴────────┐
+                  │  read the        │───▶│  validate → clamp → contrast guards   │
+                  │  subject         │    │  → motion clamps  (lib/patch.ts)      │
+                  └──────────────────┘    └───────────────────────────────────────┘
 ```
 
-The heuristic path stays exactly as it is and paints in one frame, as it does today.
-The AI layer is strictly **additive refinement** that morphs in over `--morph` when it
-lands. If the network is slow, the key is missing, the model refuses, or the user opted
-out, the site is precisely what it is now. That constraint is non-negotiable — it
-protects the demo, the tests, and the offline story.
+The heuristic path is untouched and paints in one frame, as it does today. The AI layer
+is **additive refinement** that morphs in over `--morph` when it lands. No key, slow
+network, refusal, or opt-out → the site is precisely what it is now. That constraint
+protects the demo, the tests, and the offline story, and it is not negotiable.
+
+Because the model never looks at the output, correctness has to be guaranteed
+structurally rather than checked after the fact. That is what §6 is about, and it's the
+main reason the schema is shaped the way it is.
 
 ---
 
-## 3. Pass 1 — read the subject
+## 3. The read
 
-**Input:** the 512px analysis buffer as a base64 JPEG, plus the `ImageAnalysis` numbers
-already computed, plus the ranked swatch list *with indices*.
+**Input:** the 512px analysis buffer as base64 JPEG, the `ImageAnalysis` numbers, and
+the ranked swatch list *with indices*.
 
-**Output:** a strict JSON `SceneReading`. Structured outputs (`output_config.format`
-with a JSON schema) means this is schema-guaranteed, not parsed-and-prayed-over.
+**Output:** strict JSON. Structured outputs (`output_config.format` with a JSON schema)
+makes this schema-guaranteed, not parsed-and-hoped-over.
 
 ```ts
 // lib/ai/schema.ts — the contract. Pure, no network, unit-testable.
@@ -93,27 +92,37 @@ const SceneReading = z.object({
   context:  z.enum(['industrial','natural','domestic','clinical',
                     'editorial','luxury','utilitarian','archival']),
 
-  // Colour: the model ASSIGNS ROLES, it does not invent hexes.
+  // Colour: the model ASSIGNS ROLES. It does not invent hexes.
   palette: z.object({
-    primaryIndex:   z.number().int(),   // index into analysis.swatches
-    accentIndex:    z.number().int().nullable(),
-    neutralIndex:   z.number().int().nullable(),
+    primaryIndex: z.number().int(),          // index into analysis.swatches
+    accentIndex:  z.number().int().nullable(),
+    neutralIndex: z.number().int().nullable(),
     // 60/30/10 — proportion is the thing statistics can't give us
     weights: z.object({ ground: z.number(), support: z.number(), accent: z.number() }),
     rationale: z.string(),
+  }),
+
+  motion: z.object({
+    character: z.enum(['still','shimmer','glitch','drift','settle','bloom','weave']),
+    tier:      z.enum(['ambient','accent','signature']),
+    amplitude: z.number(),                   // 0..1
+    period:    z.number(),                   // ms
+    trigger:   z.enum(['scroll','view','hover','none']),
+    // Required when tier === 'signature'. Forces the model to argue for it.
+    signatureRationale: z.string().nullable(),
   }),
 
   layout: z.object({
     archetype: z.enum(['editorial','technical','gallery','brutalist','soft']),
     heroAlign: z.enum(['left','center']),
     density:   z.enum(['tight','normal','airy']),
-    measure:   z.enum(['narrow','normal','wide']),   // body copy line length
+    measure:   z.enum(['narrow','normal','wide']),
     featureColumns: z.union([z.literal(2), z.literal(3), z.literal(4)]),
     imageRatio: z.enum(['1/1','4/3','3/2','16/9']),
   }),
 
   motif: z.object({
-    kind: z.enum(['none','stripes','grid','dots','chevron','weave','scatter']),
+    kind:  z.enum(['none','stripes','grid','dots','chevron','weave','scatter']),
     scale: z.enum(['fine','medium','coarse']),
     presence: z.enum(['absent','whisper','present']),
   }),
@@ -121,197 +130,248 @@ const SceneReading = z.object({
   voice: z.enum(['technical','neutral','editorial','friendly']),
   finishOverride: z.enum(['glossy','metallic','matte','rough','soft']).nullable(),
 
-  confidence: z.number(),            // an honest one, for the inspector
-  disagreements: z.array(z.string()), // where it overrode the heuristics, and why
+  confidence: z.number(),
+  disagreements: z.array(z.string()),  // where it overrode the heuristics, and why
 });
 ```
 
-Two design decisions worth defending:
+Two decisions worth defending:
 
 **Colour by index, never by hex.** The model picks *which measured swatch* plays each
-role. It cannot hallucinate a colour that is not in the photograph. This preserves the
-"sampled, not guessed" property the README claims and — importantly — protects the one
-part of the current output the brief says already works. The model contributes judgment
-about *role and proportion*, which is exactly what median-cut cannot provide.
+role. It cannot hallucinate a colour that isn't in the photograph. This preserves the
+"sampled, not guessed" property the README claims, and protects the part of the current
+output that already works. The model contributes judgment about *role and proportion* —
+exactly what median-cut can't provide.
 
-**`disagreements` is a first-class output.** The inspector already exists
-(`components/ThemeInspector.tsx`) and its job is to make the engine legible. Showing
-"heuristics called this `sharp`; the model called it `organic` because the subject is a
-weathered stone bollard" turns the AI from a black box into the most interesting panel
-on the page.
+**`disagreements` is a first-class output.** `ThemeInspector.tsx` exists to make the
+engine legible. "Heuristics called this `sharp`; the model called it `organic` because
+the subject is a weathered stone bollard" turns the AI from a black box into the most
+interesting panel on the page.
 
 ---
 
-## 4. Pass 2 — the critic loop
+## 4. Motion as a material property
 
-This is the part the brief is really asking for.
+This is the substantial new work, and it should follow the same rule as everything else
+in this codebase: **motion is a token, not a component change.** The AI picks a
+character and parameters, `applyTokens` writes a data attribute and four variables, and
+CSS does the rest. Nothing re-renders.
 
-1. Apply the Pass 1 patch, let the DOM settle one frame.
-2. Screenshot the generated surface. Client-side: `html2canvas` over the
-   `<GeneratedSite>` root. Server-side (better fidelity, needed for `backdrop-filter`
-   and the grain overlay): Playwright — already available in this environment at
-   `/opt/pw-browsers/chromium`.
-3. Send **both images** — source photograph and rendered page — with a rubric.
-4. The model scores and returns a bounded `TokenPatch`.
-5. Apply, re-render, re-score. Stop at score ≥ 8/10 or after 2 rounds, whichever first.
+### The vocabulary
 
-The rubric is the product. Draft:
+Seven characters, each grounded in signals `analyze.ts` already computes:
 
-> You are shown a photograph and a screenshot of a web page generated from it. Score
-> 1–10 on each axis and give one concrete correction per axis scoring below 8.
->
-> 1. **Material agreement** — do the page's surfaces read as the same substance?
-> 2. **Colour proportion** — does the page's colour distribution match the
->    photograph's, or has an incidental colour been over-promoted?
-> 3. **Structural agreement** — does the page's density, rhythm and alignment echo how
->    the subject is constructed?
-> 4. **Legibility** — is every piece of text comfortably readable on its background?
-> 5. **Coherence** — does it look designed, or assembled from a photograph?
->
-> Return only adjustments expressible in the token schema. Do not invent colours.
+| Character | Measured signal | What it does |
+|---|---|---|
+| `shimmer` | high `specularity`, low `roughness`, high `orientationEntropy` | A specular highlight travels across panel surfaces as they scroll — wavy, liquid, silk, polished metal |
+| `glitch` | high `roughness` + high `granularity` + high `dynamicRange` | Brief chromatic split and scanline displacement on entry. One-shot, never looping |
+| `drift` | high `orientationEntropy`, low `edges.density` | Slow parallax float on background layers — clouds, foliage, fabric |
+| `settle` | high `orthogonality`, low `orientationEntropy` | Precise snap into place on entry. No bounce, no overshoot — machined subjects |
+| `bloom` | high `specularity` + high `brightness` | Soft light expansion, glow ramp on entry — backlit, glass, chrome |
+| `weave` | high `periodicity.strength` | The motif offset slides along its own angle |
+| `still` | low confidence, low density | Nothing moves. The honest default |
 
-Two things this catches that statistics cannot, and which I would expect to show up on
-the first ten test photos:
+`still` is load-bearing. Without an explicit do-nothing option the model will always
+pick *something*, and a page that fidgets for no reason is worse than a static one.
 
-- Mesh gradients and grain stacking into mud on a dark, low-chroma capture. Every
-  individual token is within range; the composite is wrong. Only looking at it finds it.
-- An accent that clears 3:1 contrast (so `ensureContrast` is satisfied) but is
-  perceptually invisible against the mesh behind it, because contrast was checked
-  against `surface` and the mesh sits on top.
+### Restraint is structural, not advisory
+
+Three tiers, and the tier is what keeps this subtle:
+
+- **`ambient`** — always-on, scroll-linked, tiny. Looping is permitted *only* here, and
+  only with period ≥ 20s and amplitude ≤ 0.15. This is where the existing `mesh-drift`
+  already lives.
+- **`accent`** — fires once when an element enters the viewport. This is the default
+  tier and where most captures should land.
+- **`signature`** — the epic one. Larger amplitude, allowed to be the thing you
+  remember about the page.
+
+`signature` is gated three ways, because a model given a "go big" option will take it
+every time:
+
+1. `signatureRationale` is a required field — the model has to argue for it in writing.
+2. `lib/patch.ts` hard-caps the page at **one** signature element. Beyond that,
+   everything downgrades to `accent`.
+3. Signature is downgraded automatically when `confidence < 0.7` or when measured
+   `dynamicRange` is low — a flat, quiet photograph cannot produce a hyperactive page,
+   regardless of what the model asks for.
+
+### Mechanism: scroll-driven CSS, no JS
+
+Native scroll-driven animations are the right tool. They run off the main thread, need
+no scroll listeners or `IntersectionObserver`, and slot into the existing architecture
+without a single new React render.
+
+```css
+/* Interpolating a custom property requires registering it. */
+@property --sheen-x {
+  syntax: '<percentage>';
+  inherits: false;
+  initial-value: -30%;
+}
+
+@keyframes shimmer { from { --sheen-x: -30%; } to { --sheen-x: 130%; } }
+
+@supports (animation-timeline: view()) {
+  :root[data-motion='shimmer'] .panel {
+    animation: shimmer var(--motion-period) var(--motion-ease) both;
+    animation-timeline: view();
+    animation-range: entry 20% cover 80%;
+  }
+}
+```
+
+`applyTokens` gains:
+
+```ts
+root.dataset.motion     = motion.character;
+root.dataset.motionTier = motion.tier;
+set('--motion-amplitude', motion.amplitude);
+set('--motion-period',    `${motion.period}ms`);
+set('--motion-ease',      motion.easing);
+```
+
+Notes:
+
+- `animation-timeline` ships in Chrome, Edge and Safari; Firefox is behind a flag. The
+  `@supports` wrapper means unsupported browsers get a still page — correct
+  progressive enhancement, zero fallback code.
+- `prefers-reduced-motion` is already honored globally at `app/globals.css:112`, and
+  that rule kills these too. Worth verifying with a test rather than assuming.
+- Amplitude is the single scalar every keyframe reads, so one clamp in `patch.ts`
+  bounds the intensity of all seven characters at once.
+
+### It works without the AI too
+
+`classifyMotion(analysis)` goes in `synthesize.ts` alongside `classifyFinish`, using the
+signal table above as thresholds. The heuristic engine picks a motion character offline,
+deterministically, today. The AI *refines* that choice rather than being the only thing
+that can make it — same relationship it has to finish and geometry.
 
 ---
 
 ## 5. Layout as a token
 
-The layout gap needs a mechanism, not just a model. The proposal keeps the current
-architecture's core promise — **class names never change, nothing re-renders** — and
-extends `applyTokens` to write a layout archetype plus a handful of continuous variables.
+Same pattern, and it fixes a limitation that has nothing to do with AI. Keep the
+zero-re-render promise; extend `applyTokens` with an archetype and a few continuous
+variables:
 
 ```ts
-// additions to applyTokens()
-root.dataset.layout = layout.archetype;      // editorial | technical | gallery | ...
+root.dataset.layout = layout.archetype;   // editorial | technical | gallery | ...
 root.dataset.align  = layout.heroAlign;
-set('--measure',      MEASURE[layout.measure]);       // 58ch | 68ch | 78ch
+set('--measure',      MEASURE[layout.measure]);   // 58ch | 68ch | 78ch
 set('--feature-cols', layout.featureColumns);
 set('--image-ratio',  layout.imageRatio);
-set('--section-gap',  ...);
 ```
 
-CSS does the rest, the same way `data-finish` already drives material overrides at
-`app/globals.css:338`:
+CSS branches on it the way `data-finish` already does at `app/globals.css:338`:
 
 ```css
 :root[data-layout='editorial'] .features { grid-template-columns: 1fr; }
-:root[data-layout='editorial'] .hero     { --hero-order: 2; }
-:root[data-layout='gallery']   .features { grid-template-columns:
-                                             repeat(var(--feature-cols), 1fr); }
-:root[data-align='center']     .hero     { align-items: center; text-align: center; }
+:root[data-layout='gallery']   .features {
+  grid-template-columns: repeat(var(--feature-cols), 1fr);
+}
+:root[data-align='center'] .hero { align-items: center; text-align: center; }
 ```
 
 Section order via `order` on flex children, so even the page's sequence can respond
-without touching the JSX. Five archetypes is enough to make two captures feel like two
-products, and it costs one data attribute plus six variables — it does not compromise
-the zero-re-render architecture at all.
+without touching JSX. Five archetypes is enough to make two captures feel like two
+products; the cost is one data attribute and five variables.
 
-Optional second layer, cheap and high-impact: **copy register**. `FEATURES` and `STATS`
-in `GeneratedSite.tsx` are hardcoded strings about the engine itself. Let the model fill
-a fixed slot skeleton (headline, lede, three feature titles) in the subject's register,
-with a hard rule that it may not invent factual claims. A page about a rusted bolt that
-also *reads* industrial is a step change in how the demo lands.
+Optional and cheap: **copy register**. `FEATURES` and `STATS` in `GeneratedSite.tsx` are
+hardcoded strings about the engine itself. Let the model fill a fixed slot skeleton
+(headline, lede, three feature titles) in the subject's register, with a hard rule that
+it may not invent factual claims.
 
 ---
 
-## 6. Guardrails — what the AI is not allowed to do
+## 6. Guardrails
 
-This is what keeps the AI layer from being a downgrade.
+With no critic pass, every check is deterministic and lives in `lib/patch.ts`. That's a
+better place for them anyway — it's testable, offline, and can't itself be wrong in a
+novel way.
 
 | Rule | Enforced by |
 |---|---|
 | Never emits CSS, class names or markup | Schema has no free-text style field |
 | Never invents a colour | Palette is swatch **indices**, resolved locally |
 | Cannot break contrast | Patch runs through existing `ensureContrast` / `makeLabelable` |
-| Cannot leave sane ranges | Every numeric is clamped in `lib/patch.ts` before use |
-| Cannot block the page | Heuristic theme paints first; patch is applied or discarded |
-| Cannot make the site unreproducible | Reading cached by perceptual hash of the source buffer |
+| Cannot leave sane ranges | Every numeric clamped before use |
+| At most one `signature` element | Counter in `patch.ts`; excess downgrades to `accent` |
+| Loops only when slow and small | `ambient` tier only, period ≥ 20s, amplitude ≤ 0.15 |
+| Motion can't exceed the photo's energy | Amplitude ceiling scales with measured `dynamicRange` |
+| Respects reduced motion | Existing global rule, plus a regression test |
+| Cannot block the page | Heuristic theme paints first; patch applied or discarded |
+| Reproducible | Reading cached by perceptual hash of the source buffer |
 
-`lib/` stays dependency-free and pure. The new `lib/patch.ts` — validate, clamp, apply,
-re-run guards — is testable with fixture JSON and no network, so the existing 38-test
-suite grows rather than being compromised. Only `lib/ai/client.ts` touches the wire.
+`lib/` stays dependency-free and pure. `lib/patch.ts` is testable with fixture JSON and
+no network, so the existing 38-test suite grows rather than being compromised. Only
+`lib/ai/client.ts` touches the wire.
 
-One risk deserves its own line: models have persistent default aesthetics and will drift
-toward a house style (warm cream, serif display, terracotta accent) given any opening.
-The swatch-index constraint blocks it on colour; on layout, the mitigation is that the
-archetype is an enum of five and the critic scores *agreement with the photograph*, not
-"is this a nice page".
+One risk worth naming: models have persistent default aesthetics and will drift toward a
+house style given any opening. The swatch-index constraint blocks that on colour; the
+tier gating blocks it on motion; on layout the archetype is an enum of five.
 
 ---
 
 ## 7. Cost, latency, caching
 
-Per capture, Opus 5 at $5/$25 per MTok, with Pass 1 plus one critic round:
+One call per capture. Opus 5 at $5/$25 per MTok:
 
 | | input | output | ≈ cost |
 |---|---|---|---|
-| Pass 1 (photo + numbers) | ~3k tok | ~600 tok | $0.030 |
-| Pass 2 (photo + screenshot) | ~5k tok | ~400 tok | $0.035 |
-| **Total** | | | **~$0.07** |
+| The read (photo + numbers) | ~3k tok | ~700 tok | **~$0.033** |
 
-Estimates — image token counts vary with resolution and should be re-baselined with
+An estimate — image token counts vary with resolution and should be re-baselined with
 `messages.count_tokens` against the real buffers before anyone quotes them.
 
 Levers:
 
-- **Perceptual hash cache.** dHash the 256px analysis buffer; identical/near-identical
-  captures reuse the stored `SceneReading`. Makes repeat captures free *and* restores
-  determinism — the same photo reliably produces the same site, which the current
-  engine guarantees by construction and I would not want to lose.
-- **Prompt caching.** The rubric and system prompt are stable; `cache_control:
+- **Perceptual hash cache.** dHash the 256px buffer; identical or near-identical
+  captures reuse the stored reading. Repeat captures cost nothing, and it restores
+  determinism — the same photo reliably produces the same site, which the current engine
+  guarantees by construction and which I'd rather not lose.
+- **Prompt caching.** The system prompt and signal table are stable; `cache_control:
   {type:'ephemeral'}` on them. Opus 5's minimum cacheable prefix is 512 tokens, which
-  the rubric comfortably exceeds, so this actually caches.
-- **Model tiering.** Opus 5 for Pass 1 (the judgment that matters). Sonnet 5 for critic
-  rounds — it has high-res vision and is a third of the price. Haiku 4.5 as a budget
-  tier if this ever runs at volume.
-- **Effort.** `output_config: { effort: 'low' }` on the critic pass; it is a scoring
-  task, not a reasoning-heavy one. Leave thinking on — disabling it on Opus 5 has known
-  failure modes and low effort gets most of the latency saving anyway.
+  that comfortably exceeds.
+- **Effort.** Worth an `output_config: { effort }` sweep — `medium` may well be enough
+  for a single structured read, and it's the main latency lever. Leave thinking on;
+  disabling it on Opus 5 has known failure modes and low effort captures most of the
+  saving anyway.
 
-Latency budget: heuristic theme at ~0ms (unchanged), Pass 1 landing at 2–4s, critic
-settling by 6–10s. Each arrives as a `--morph` transition, so the page visibly
-*refines* rather than stalling. That progression is worth showing in the UI — a
-"reading…" → "verifying…" → "settled" indicator on the capture status component makes
-the latency read as craft rather than lag.
+Latency: heuristic theme at ~0ms (unchanged), refinement landing at 2–4s as a `--morph`
+transition. Worth surfacing on `CaptureStatus` as "reading…" → "settled" so the
+progression reads as craft rather than lag.
 
 ---
 
 ## 8. Privacy
 
-The current engine never sends a photograph anywhere; that is a real property and
-losing it silently would be wrong. Requirements:
+The current engine never sends a photograph anywhere. Losing that silently would be
+wrong.
 
-- Explicit opt-in toggle, off by default, with a plain sentence about what leaves the
-  device.
-- Send the **512px analysis buffer**, never the 900px preview in
-  `ThemeEngine.toPreview`.
+- Explicit opt-in, off by default, with a plain sentence about what leaves the device.
+- Send the **512px analysis buffer**, never the 900px preview in `ThemeEngine.toPreview`.
 - No storage beyond the in-memory phash cache; nothing persisted server-side.
-- The client-only path stays fully functional and is never framed as degraded — same
-  posture the README already takes with the camera/upload fallback.
+- The client-only path stays fully functional and is never framed as degraded.
 
 ---
 
 ## 9. What I would measure
 
-"Vastly improve" is unfalsifiable without a number. Minimum viable eval:
+"Vastly improve" is unfalsifiable without a number.
 
 1. **30-photo fixture set** covering the hard cases: near-monochrome, blown-out,
-   subject-vs-background colour conflict, strong distractor colour, heavy motif,
-   night shots.
+   subject-vs-background colour conflict, strong distractor colour, heavy motif, night
+   shots, and — for motion specifically — wavy/specular, granular/harsh, and flat/quiet.
 2. **Blind pairwise A/B** — heuristic-only vs AI-refined, same photo, order shuffled,
-   scored by humans on "which page looks more like this object". Target: AI wins ≥70%.
-3. **Automated regression** — every AI output must still clear the contrast floors, on
-   all 30. Any failure is a bug in `lib/patch.ts`, not a model problem.
-4. **Critic self-score before/after**, tracked over time as a cheap proxy.
+   scored on "which page looks more like this object". Target: AI wins ≥70%.
+3. **Motion appropriateness**, scored separately. It's the axis most likely to be
+   actively annoying when wrong, and a page can win on colour while losing on motion.
+4. **Automated regression** — every AI output still clears the contrast floors and the
+   motion clamps, on all 30. Any failure is a bug in `lib/patch.ts`, not a model problem.
 
-Without (2) this is engineering theatre. It is also the cheapest part of the work.
+Without (2) and (3) this is engineering theatre. It's also the cheapest part of the work.
 
 ---
 
@@ -319,27 +379,26 @@ Without (2) this is engineering theatre. It is also the cheapest part of the wor
 
 | Phase | Work | Ships |
 |---|---|---|
-| 1 | `lib/ai/schema.ts`, `lib/patch.ts`, fixture tests | Patch application with no network; proves guards hold |
-| 2 | `lib/ai/client.ts`, Pass 1, phash cache, opt-in toggle | Semantic palette roles + finish/voice overrides |
-| 3 | Layout tokens in `applyTokens` + `globals.css` archetypes | Two captures finally look like two products |
-| 4 | Screenshot + critic loop | The actual closed loop |
+| 1 | `classifyMotion()` in `synthesize.ts`, motion tokens, scroll-driven CSS | Motion working offline, deterministically, no AI at all |
+| 2 | `lib/ai/schema.ts`, `lib/patch.ts`, fixture tests | Patch application with no network; proves the guards hold |
+| 3 | `lib/ai/client.ts`, the read, phash cache, opt-in toggle | Semantic palette roles, motion, finish and voice refinement |
+| 4 | Layout archetypes in `applyTokens` + `globals.css` | Two captures finally look like two products |
 | 5 | Copy register, inspector `disagreements` panel | The demo lands |
 
-Phases 1 and 3 are worth doing regardless of whether the AI layer ships — Phase 3 in
-particular fixes a structural limitation that has nothing to do with AI, and it makes
-the AI layer's output far more visible when it does arrive.
+Phase 1 first, deliberately. Motion is the biggest visible change in this proposal and
+it doesn't need the model to exist — building it heuristically first means the mechanism
+is proven and tested before the AI is allowed near it, and if the AI layer never ships
+the engine is still meaningfully better.
 
 ---
 
 ## 11. Open questions
 
-- **Screenshot fidelity.** `html2canvas` does not render `backdrop-filter` or the SVG
-  grain overlay correctly — precisely the material cues the critic needs to judge. Are
-  we willing to add a server-side Playwright render, or does the critic score a
-  degraded screenshot and lose material sensitivity?
-- **How much drift is acceptable?** If the critic can move the primary colour, the same
-  photograph may produce a slightly different site across cache misses. The phash cache
-  hides this in practice; do we also want a "lock" that pins the tokens after the first
-  settle?
-- **Layout archetype count.** Five is a guess. Fewer means captures still feel same-y;
-  more means CSS surface area grows fast and each archetype gets less polish.
+- **Signature threshold.** How often is "epic" the right answer — 1 in 10 captures, or 1
+  in 50? That number sets the confidence gate, and I'd rather tune it from the fixture
+  set than guess.
+- **Layout archetype count.** Five is a guess. Fewer and captures still feel same-y;
+  more and each one gets less polish.
+- **Firefox.** Scroll-driven animation is flagged there, so Firefox gets a still page.
+  Acceptable as progressive enhancement, or worth a small `IntersectionObserver`
+  fallback for the `accent` tier only?
