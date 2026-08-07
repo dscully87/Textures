@@ -35,6 +35,14 @@ available and is not a degraded mode.
 | `lib/synthesize.ts` | The opinionated half: measurements → design tokens |
 | `lib/patterns.ts` | Procedural tiling SVGs and fractal-noise grain, as data URIs |
 | `lib/tokens.ts` | The token contract and `applyTokens`, the only bridge to the DOM |
+| `lib/vision/labels.ts` | The closed label sets CLIP scores against |
+| `lib/vision/classify.ts` | Zero-shot classification, in the browser |
+| `lib/vision/phash.ts` | Difference hashing, so a repeated subject reuses its reading |
+| `lib/ai/prompt.ts` | Builds the reasoning request from labels + measurements |
+| `lib/ai/reading.ts` | The reading contract and its validator |
+| `lib/ai/refine.ts` | Orchestrates classify → reason → patch, client-side |
+| `lib/patch.ts` | Applies a reading to the tokens, and refuses what it shouldn't |
+| `app/api/read/route.ts` | The only network hop. Holds the API key |
 | `components/ThemeEngine.tsx` | Runs the pipeline, owns capture state |
 | `components/CameraCapture.tsx` | `getUserMedia` with upload/drag-drop fallback |
 | `components/GeneratedSite.tsx` | The generated surface — entirely static class names |
@@ -85,6 +93,110 @@ since a diagonal shift aliases onto axis-aligned repeats.
 neutral, editorial, friendly) and dynamic range modulates weight, tracking and
 scale. Density rides on Tailwind's `--spacing` step, so one variable rescales
 every padding, margin and gap on the page.
+
+**Material → motion.** A wavy, specular surface shimmers; coarse high-contrast
+grain glitches; a soft organic subject drifts; a machined one settles. Seven
+characters, each scored from signals already measured — and `still` is a real
+answer, taken whenever the frame carries no structure or no dynamic range,
+because a page that moves for no reason is worse than one that holds still.
+
+Restraint is structural rather than advisory. Motion runs on three tiers:
+`ambient` (page-scale, the only tier permitted to loop, and never faster than
+20s), `accent` (fires once on entry — the default), and `signature`
+(section-scale and memorable, capped at one element per page). The loud tier
+clears three gates: a written rationale, confidence above 0.7, and enough dynamic
+range in the photograph itself. A flat, quiet frame cannot produce a hyperactive
+page no matter what asks for it.
+
+The mechanism is native scroll-driven CSS (`animation-timeline`), so motion is
+one data attribute and four variables — nothing re-renders and nothing listens to
+scroll. Firefox has not shipped scroll timelines, so it gets a still page via
+`@supports`; `prefers-reduced-motion` already disables all of it.
+
+**Composition → layout.** Five archetypes (`editorial`, `technical`, `gallery`,
+`brutalist`, `soft`) plus line measure, feature column count and image ratio,
+written as `data-layout` and three variables. Without this the markup could only
+ever be recoloured, and two captures would produce the same product in different
+paint.
+
+## The AI layer (optional)
+
+Off by default. With the toggle on, a capture takes one extra pass:
+
+```
+capture ─┬─ analyzeImage       (existing, on device) ─┐
+         └─ CLIP zero-shot     (on device)            ├─▶ /api/read ─▶ model ─▶ reading
+                                                      ┘   (text only)
+```
+
+**The photograph never leaves the browser.** CLIP scores it against closed label
+sets locally, and only those labels — with confidences — plus the pixel
+measurements are sent on. There is no image in the request body.
+
+What the model contributes is judgment, not measurement: which measured swatch is
+the *subject's* colour rather than the most saturated distractor, what proportion
+each role should occupy, which motion character the surface implies, and which
+layout archetype fits. It also returns `disagreements`, so where it overrides the
+deterministic engine it has to say why.
+
+What it is not allowed to do:
+
+| Rule | Enforced by |
+| --- | --- |
+| Never invents a colour | Palette is swatch **indices**, resolved locally; a bad index falls back |
+| Never breaks contrast | Reassigned palettes re-run `composePalette` and every contrast repair |
+| Never exceeds sane ranges | Every numeric clamped in `lib/ai/reading.ts` and `lib/patch.ts` |
+| Never gets `signature` for free | Rationale required, plus confidence and dynamic-range gates |
+| Never loops fast | Looping is `ambient`-only, floor of 20s |
+| Never blocks the page | Deterministic theme paints first; a patch lands later or not at all |
+| Never breaks determinism | Readings cached by perceptual hash — same subject, same site |
+
+Every failure mode — no key, provider down, timeout, malformed JSON, wrong shape —
+resolves to the deterministic theme, which is a complete product on its own. That
+is also why `npm test` needs no network: `lib/` is still pure, and the guards are
+tested with fixtures.
+
+### Configuration
+
+```bash
+cp .env.example .env.local   # then add your key
+```
+
+`DEEPSEEK_API_KEY` is read server-side in `app/api/read/route.ts`. On Vercel, set
+it under **Settings → Environment Variables** and pull it locally with
+`vercel env pull .env.local`.
+
+**Never prefix it with `NEXT_PUBLIC_`.** That inlines the value into the client
+bundle at build time, making it readable by every visitor — and once a key ships
+that way, rotating it is the only remedy.
+
+`DEEPSEEK_MODEL` and `DEEPSEEK_BASE_URL` are optional overrides.
+
+### Verifying a deploy
+
+Refinement is designed to fail invisibly — right for a visitor, useless for
+whoever just wired it up. Two things make it diagnosable.
+
+**Is the key in this environment?** `GET /api/read` answers without calling the
+provider, so it costs nothing and there is nothing to abuse:
+
+```bash
+curl https://<your-deployment>/api/read
+# { "configured": true, "keyLength": 35, "model": "deepseek-v4-pro", ... }
+```
+
+`configured: false` after adding the variable almost always means the deploy
+predates it — Vercel applies environment changes to *new* builds only, so
+redeploy.
+
+**Why didn't it refine?** With the toggle on, a failed capture prints the
+reason under the status line, and passes through the provider's own message on
+a 4xx. That distinction matters: a wrong `DEEPSEEK_MODEL`, an invalid key and an
+account with no credit are all bare 4xx from outside, and three different fixes.
+
+> `npm audit` reports advisories in `onnxruntime-node` and `sharp`. Those are the
+> Node halves of transformers.js; we only ever run the browser build, and both are
+> listed in `serverExternalPackages` so they stay out of the server bundle.
 
 ## Polish techniques
 

@@ -18,10 +18,12 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from 'react';
 import { ANALYSIS_SIZE, ImageAnalysis, analyzeImage, extractPixels } from '@/lib/analyze';
 import { DesignTokens, applyTokens } from '@/lib/tokens';
 import { defaultTokens, synthesize } from '@/lib/synthesize';
+import { Refinement, RefinementStage, refineTheme } from '@/lib/ai/refine';
 
 export interface Capture {
   /** Object URL or data URL of the source frame. */
@@ -33,6 +35,43 @@ export interface Capture {
   elapsedMs: number;
 }
 
+/** Persisted so the choice survives a reload; opt-in, so absent means off. */
+const REFINE_KEY = 'textures:refine';
+
+/**
+ * The opt-in preference, as an external store.
+ *
+ * localStorage is not React state, and reading it in an effect to mirror it into
+ * state costs a second render on every mount. `useSyncExternalStore` reads it
+ * directly and takes an explicit server snapshot, which also makes the
+ * hydration answer unambiguous: the server cannot know the preference, so it
+ * renders `false` — the safe default for something that is opt-in.
+ */
+const refinePreference = {
+  listeners: new Set<() => void>(),
+  read(): boolean {
+    try {
+      return window.localStorage.getItem(REFINE_KEY) === '1';
+    } catch {
+      // Private mode or blocked storage. Off is the correct answer when the
+      // user's actual choice is unknowable.
+      return false;
+    }
+  },
+  write(enabled: boolean): void {
+    try {
+      window.localStorage.setItem(REFINE_KEY, enabled ? '1' : '0');
+    } catch {
+      /* preference is session-only if storage is unavailable */
+    }
+    refinePreference.listeners.forEach((listener) => listener());
+  },
+  subscribe(listener: () => void): () => void {
+    refinePreference.listeners.add(listener);
+    return () => refinePreference.listeners.delete(listener);
+  },
+};
+
 interface EngineState {
   tokens: DesignTokens;
   analysis: ImageAnalysis | null;
@@ -43,6 +82,13 @@ interface EngineState {
   ingest: (source: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement) => Promise<void>;
   ingestFile: (file: File) => Promise<void>;
   reset: () => void;
+
+  // --- Refinement (opt-in) -------------------------------------------------
+  /** Off by default. Nothing reaches the network until this is true. */
+  refineEnabled: boolean;
+  setRefineEnabled: (enabled: boolean) => void;
+  refinement: Refinement | null;
+  refineStage: RefinementStage | null;
 }
 
 const EngineContext = createContext<EngineState | null>(null);
@@ -88,6 +134,27 @@ export function ThemeEngine({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const objectUrls = useRef<string[]>([]);
 
+  const [refinement, setRefinement] = useState<Refinement | null>(null);
+  const [refineStage, setRefineStage] = useState<RefinementStage | null>(null);
+  /** Cancels an in-flight refinement when a newer capture supersedes it. */
+  const refineRun = useRef<AbortController | null>(null);
+
+  const refineEnabled = useSyncExternalStore(
+    refinePreference.subscribe,
+    refinePreference.read,
+    () => false,
+  );
+
+  const setRefineEnabled = useCallback((enabled: boolean) => {
+    refinePreference.write(enabled);
+    if (!enabled) {
+      // Switching off mid-flight has to actually stop the request, not just
+      // stop the next one.
+      refineRun.current?.abort();
+      setRefineStage(null);
+    }
+  }, []);
+
   // Publish the resting theme on mount so the pre-capture UI is already styled
   // by the same mechanism the generated site uses.
   useEffect(() => {
@@ -127,22 +194,50 @@ export function ThemeEngine({ children }: { children: React.ReactNode }) {
         // time React schedules its render.
         applyTokens(nextTokens);
 
+        const preview = toPreview(source, width, height);
+
         setTokens(nextTokens);
         setAnalysis(nextAnalysis);
+        setRefinement(null);
         setCapture({
-          src: toPreview(source, width, height),
+          src: preview,
           width,
           height,
           takenAt: Date.now(),
           elapsedMs,
         });
         setStatus('ready');
+
+        // The deterministic theme is now on screen and this capture is complete.
+        // Refinement runs after, without awaiting: it either lands as a morph a
+        // few seconds later or it doesn't, and the page is finished either way.
+        if (!refineEnabled) return;
+
+        refineRun.current?.abort();
+        const run = new AbortController();
+        refineRun.current = run;
+
+        void refineTheme(nextTokens, nextAnalysis, pixels, preview, {
+          signal: run.signal,
+          onStage: (stage) => {
+            if (!run.signal.aborted) setRefineStage(stage);
+          },
+        }).then((result) => {
+          // A newer capture started while this was in flight; its tokens are on
+          // screen and this stale result must not overwrite them.
+          if (run.signal.aborted || refineRun.current !== run) return;
+          if (!result) return;
+
+          applyTokens(result.tokens);
+          setTokens(result.tokens);
+          setRefinement(result);
+        });
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Could not read that image.');
         setStatus('error');
       }
     },
-    [],
+    [refineEnabled],
   );
 
   const ingestFile = useCallback(
@@ -174,6 +269,7 @@ export function ThemeEngine({ children }: { children: React.ReactNode }) {
   );
 
   const reset = useCallback(() => {
+    refineRun.current?.abort();
     const base = defaultTokens();
     applyTokens(base);
     setTokens(base);
@@ -181,11 +277,42 @@ export function ThemeEngine({ children }: { children: React.ReactNode }) {
     setCapture(null);
     setStatus('idle');
     setError(null);
+    setRefinement(null);
+    setRefineStage(null);
   }, []);
 
+  // A refinement outliving its page would apply tokens to a torn-down DOM.
+  useEffect(() => () => refineRun.current?.abort(), []);
+
   const value = useMemo<EngineState>(
-    () => ({ tokens, analysis, capture, status, error, ingest, ingestFile, reset }),
-    [tokens, analysis, capture, status, error, ingest, ingestFile, reset],
+    () => ({
+      tokens,
+      analysis,
+      capture,
+      status,
+      error,
+      ingest,
+      ingestFile,
+      reset,
+      refineEnabled,
+      setRefineEnabled,
+      refinement,
+      refineStage,
+    }),
+    [
+      tokens,
+      analysis,
+      capture,
+      status,
+      error,
+      ingest,
+      ingestFile,
+      reset,
+      refineEnabled,
+      setRefineEnabled,
+      refinement,
+      refineStage,
+    ],
   );
 
   return <EngineContext.Provider value={value}>{children}</EngineContext.Provider>;

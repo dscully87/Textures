@@ -42,7 +42,7 @@ export function GeneratedSite() {
     <div className="morph flex flex-col">
       {/* ---------------------------------------------------------------- Hero */}
       <section className="section patterned relative px-6">
-        <div className="mx-auto flex max-w-5xl flex-col items-start gap-6">
+        <div className="hero mx-auto flex max-w-5xl flex-col items-start gap-6">
           <span className="morph inline-flex items-center gap-2 rounded-full border border-line bg-surface-alt/60 px-4 py-1.5 text-xs font-medium tracking-wide text-ink-muted">
             <span
               className="size-1.5 rounded-full bg-accent"
@@ -52,12 +52,12 @@ export function GeneratedSite() {
             {status === 'ready' ? 'Theme synthesized from your capture' : 'Neutral resting theme'}
           </span>
 
-          <h1 className="display font-heading max-w-3xl">
+          <h1 className="hero-signature display font-heading max-w-3xl">
             This page is wearing
             <span className="text-primary"> whatever you point at it</span>.
           </h1>
 
-          <p className="lede max-w-2xl">{meta.description}</p>
+          <p className="lede measure">{meta.description}</p>
 
           <div className="flex flex-wrap items-center gap-3">
             <button type="button" className="btn btn-primary">
@@ -83,7 +83,7 @@ export function GeneratedSite() {
       <section className="section px-6">
         <div className="mx-auto max-w-5xl">
           <h2 className="font-heading text-3xl sm:text-4xl">What the photograph decides</h2>
-          <div className="mt-8 grid gap-5 md:grid-cols-3">
+          <div className="features mt-8">
             {FEATURES.map((feature, i) => (
               <article key={feature.title} className="panel patterned morph flex flex-col gap-3 p-6">
                 <span
@@ -93,7 +93,7 @@ export function GeneratedSite() {
                   {i + 1}
                 </span>
                 <h3 className="font-heading text-xl">{feature.title}</h3>
-                <p className="text-sm leading-body text-ink-muted">{feature.body}</p>
+                <p className="measure text-sm leading-body text-ink-muted">{feature.body}</p>
               </article>
             ))}
           </div>
@@ -112,10 +112,10 @@ export function GeneratedSite() {
               <img
                 src={capture.src}
                 alt="The captured source frame this theme was generated from"
-                className="aspect-[4/3] w-full object-cover"
+                className="capture-figure"
               />
             ) : (
-              <div className="flex aspect-[4/3] w-full items-center justify-center bg-surface-alt/50 text-sm text-ink-muted">
+              <div className="capture-figure flex items-center justify-center bg-surface-alt/50 text-sm text-ink-muted">
                 No capture yet
               </div>
             )}

@@ -30,6 +30,12 @@ import {
   Finish,
   Geometry,
   MeshStop,
+  MotionCharacter,
+  MotionTier,
+  MotionTokens,
+  MotionTrigger,
+  LayoutArchetype,
+  LayoutTokens,
   Palette,
   PatternKind,
   TypeVoice,
@@ -109,22 +115,22 @@ function makeLabelable(color: string, target = 4.5): { color: string; onColor: s
   return { color: bestColor, onColor: bestPole.onColor };
 }
 
-function buildPalette(analysis: ImageAnalysis): Palette {
-  const swatches = analysis.swatches;
-  const fallback: Swatch = {
-    rgb: { r: 90, g: 105, b: 130 },
-    hex: '#5a6982',
-    population: 1,
-    saturation: 0.2,
-    lightness: 0.43,
-    hue: 218,
-  };
-
-  const ranked = [...(swatches.length ? swatches : [fallback])].sort(
-    (a, b) => vividness(b) - vividness(a),
-  );
-
-  const primarySrc = ranked[0];
+/**
+ * Turn three chosen source swatches into a full, readable palette.
+ *
+ * Split out from `buildPalette` so the AI layer can supply its own role
+ * assignment and still go through the identical treatment — chroma lifting,
+ * accent tempering, neutral tinting and every contrast repair. The model gets to
+ * decide *which* measured colour leads; it does not get to skip the guards.
+ */
+export function composePalette(
+  primarySrc: Swatch,
+  accentSrc: Swatch | undefined,
+  secondarySrc: Swatch | undefined,
+  sourceIsDark: boolean,
+  colorfulness: number,
+  brightness: number,
+): Palette {
   // A washed-out subject still needs a usable brand color, so lift very low
   // chroma into a workable range rather than shipping mud — then make sure a
   // label can actually sit on top of it.
@@ -138,21 +144,6 @@ function buildPalette(analysis: ImageAnalysis): Palette {
   );
   const primaryHue = hexToHsl(primary).h;
   const primarySat = hexToHsl(primary).s;
-
-  // Scheme follows the photograph: a night shot should not produce a white site.
-  const sourceIsDark = analysis.texture.brightness < 0.46;
-
-  // Accent: the most chromatic swatch that is genuinely a different hue, but
-  // weighted by coverage too — a hue that occupies three pixels of JPEG fringing
-  // is noise, not a second voice.
-  const accentSrc = ranked
-    .slice(1)
-    .filter((s) => s.saturation > 0.12 && s.population > 0.03 && hueDistance(s.hue, primaryHue) > 25)
-    .sort(
-      (a, b) =>
-        hueDistance(b.hue, primaryHue) * b.saturation * (0.5 + b.population) -
-        hueDistance(a.hue, primaryHue) * a.saturation * (0.5 + a.population),
-    )[0];
 
   // Accent saturation is *tempered*, never maximized. A complement taken at full
   // chroma reads as an alarm rather than an accent — rotating a saturated orange
@@ -169,14 +160,11 @@ function buildPalette(analysis: ImageAnalysis): Palette {
     : // Nothing complementary in frame — derive one so the UI still has a second
       // voice for CTAs and highlights.
       hslToHex({
-        h: (primaryHue + (analysis.colorfulness > 0.4 ? 150 : 32)) % 360,
+        h: (primaryHue + (colorfulness > 0.4 ? 150 : 32)) % 360,
         s: Math.min(0.6, Math.max(0.3, primarySat * 0.8)),
         l: accentLightness,
       });
 
-  const secondarySrc = ranked
-    .slice(1)
-    .filter((s) => s.hex !== accentSrc?.hex && hueDistance(s.hue, primaryHue) > 12)[0];
   const secondary = secondarySrc
     ? setLightness(secondarySrc.hex, lerp(0.45, 0.6, secondarySrc.saturation))
     : mixHex(primary, accentRaw, 0.5);
@@ -184,11 +172,11 @@ function buildPalette(analysis: ImageAnalysis): Palette {
   // Keep a whisper of the subject's hue in the neutrals — a warm wooden object
   // yields warm greys, a cold steel one yields cool greys.
   const neutralHue = hexToHsl(primary).h;
-  const tint = lerp(0.02, 0.09, analysis.colorfulness);
+  const tint = lerp(0.02, 0.09, colorfulness);
 
   const surface = sourceIsDark
-    ? hslToHex({ h: neutralHue, s: tint + 0.03, l: lerp(0.06, 0.11, analysis.texture.brightness) })
-    : hslToHex({ h: neutralHue, s: tint, l: lerp(0.99, 0.94, analysis.colorfulness) });
+    ? hslToHex({ h: neutralHue, s: tint + 0.03, l: lerp(0.06, 0.11, brightness) })
+    : hslToHex({ h: neutralHue, s: tint, l: lerp(0.99, 0.94, colorfulness) });
 
   const surfaceAlt = sourceIsDark
     ? mixHex(surface, primary, 0.14)
@@ -207,6 +195,63 @@ function buildPalette(analysis: ImageAnalysis): Palette {
   const accent = ensureContrast(accentRaw, surface, 3);
 
   return { primary, secondary, accent, surface, surfaceAlt, ink, inkMuted, border, onPrimary };
+}
+
+/** The neutral swatch used when a photograph yields nothing usable. */
+export const FALLBACK_SWATCH: Swatch = {
+  rgb: { r: 90, g: 105, b: 130 },
+  hex: '#5a6982',
+  population: 1,
+  saturation: 0.2,
+  lightness: 0.43,
+  hue: 218,
+};
+
+/**
+ * Rank the measured swatches and assign roles by chroma, coverage and hue
+ * separation. This is the heuristic half — the part the AI layer replaces when
+ * it has a better idea about which colour is actually the subject.
+ */
+export function rankSwatches(analysis: ImageAnalysis) {
+  const ranked = [...(analysis.swatches.length ? analysis.swatches : [FALLBACK_SWATCH])].sort(
+    (a, b) => vividness(b) - vividness(a),
+  );
+
+  const primarySrc = ranked[0];
+  const primaryHue = primarySrc.hue;
+
+  // Accent: the most chromatic swatch that is genuinely a different hue, but
+  // weighted by coverage too — a hue that occupies three pixels of JPEG fringing
+  // is noise, not a second voice.
+  const accentSrc = ranked
+    .slice(1)
+    .filter((s) => s.saturation > 0.12 && s.population > 0.03 && hueDistance(s.hue, primaryHue) > 25)
+    .sort(
+      (a, b) =>
+        hueDistance(b.hue, primaryHue) * b.saturation * (0.5 + b.population) -
+        hueDistance(a.hue, primaryHue) * a.saturation * (0.5 + a.population),
+    )[0];
+
+  const secondarySrc = ranked
+    .slice(1)
+    .filter((s) => s.hex !== accentSrc?.hex && hueDistance(s.hue, primaryHue) > 12)[0];
+
+  return { ranked, primarySrc, accentSrc, secondarySrc };
+}
+
+function buildPalette(analysis: ImageAnalysis): Palette {
+  const { primarySrc, accentSrc, secondarySrc } = rankSwatches(analysis);
+  // Scheme follows the photograph: a night shot should not produce a white site.
+  const sourceIsDark = analysis.texture.brightness < 0.46;
+
+  return composePalette(
+    primarySrc,
+    accentSrc,
+    secondarySrc,
+    sourceIsDark,
+    analysis.colorfulness,
+    analysis.texture.brightness,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -275,7 +320,7 @@ interface SurfaceTokens {
   grainImage: string;
 }
 
-function buildSurface(
+export function buildSurface(
   analysis: ImageAnalysis,
   palette: Palette,
   finish: Finish,
@@ -366,7 +411,7 @@ interface TypographyTokens {
   scale: number;
 }
 
-function buildTypography(voice: TypeVoice, analysis: ImageAnalysis): TypographyTokens {
+export function buildTypography(voice: TypeVoice, analysis: ImageAnalysis): TypographyTokens {
   const contrastPush = analysis.texture.dynamicRange;
 
   const base: Record<TypeVoice, Omit<TypographyTokens, 'voice'>> = {
@@ -459,6 +504,128 @@ export function classifyPattern(analysis: ImageAnalysis, geometry: Geometry): Pa
 
   if (geometry === 'round' || geometry === 'organic') return 'dots';
   return 'weave';
+}
+
+// ---------------------------------------------------------------------------
+// Composition
+// ---------------------------------------------------------------------------
+
+const LAYOUT_BY_GEOMETRY: Record<Geometry, LayoutArchetype> = {
+  sharp: 'brutalist',
+  faceted: 'technical',
+  balanced: 'technical',
+  organic: 'editorial',
+  round: 'soft',
+};
+
+/**
+ * The heuristic composition. Geometry is the strongest available proxy for how
+ * a subject is *built*, and how a subject is built is what a layout echoes — a
+ * machined object wants a tight grid, a weathered organic one wants a column
+ * with air around it.
+ */
+export function buildLayout(geometry: Geometry, analysis: ImageAnalysis): LayoutTokens {
+  const archetype = LAYOUT_BY_GEOMETRY[geometry];
+  const busy = Math.min(1, analysis.edges.density / 0.14);
+
+  return {
+    archetype,
+    heroAlign: archetype === 'editorial' || archetype === 'soft' ? 'center' : 'left',
+    // A visually busy photograph gets a narrower column, so the page stays
+    // readable against a more active background.
+    measure: Math.round(lerp(72, 58, busy)),
+    featureColumns: archetype === 'editorial' ? 2 : 3,
+    imageRatio: archetype === 'gallery' ? '1 / 1' : '4 / 3',
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Motion
+// ---------------------------------------------------------------------------
+
+/**
+ * Motion is a material property, decided from the same measurements as finish.
+ *
+ * Scored rather than cascaded, so the thresholds are visible and tunable and no
+ * single signal silently dominates. When nothing scores above the floor the
+ * answer is `still` — a page that fidgets for no reason is worse than one that
+ * holds still, so "nothing" has to be a reachable outcome rather than whatever
+ * the last `else` branch happened to be.
+ */
+export function classifyMotion(analysis: ImageAnalysis): MotionCharacter {
+  const { specularity, roughness, granularity, dynamicRange, brightness } = analysis.texture;
+  const { orientationEntropy, orthogonality, density } = analysis.edges;
+
+  // Nothing was observed, so nothing is implied. Orientation entropy is at its
+  // maximum for a blank frame — every angle bin is equally empty — which reads
+  // as "organic" to any score that trusts entropy alone. An empty frame is not
+  // organic; it is empty, and it gets stillness.
+  if (density < 0.012 || dynamicRange < 0.06) return 'still';
+
+  const scores: Record<Exclude<MotionCharacter, 'still'>, number> = {
+    // Light travelling over a smooth, curved surface. Roughness vetoes it for
+    // the same reason it vetoes gloss: a coarse surface scatters instead.
+    shimmer: specularity * 0.6 + orientationEntropy * 0.3 - roughness * 0.7,
+    // Coarse and high-contrast. Granularity separates real grain from a merely
+    // busy frame, which would otherwise score here on dynamic range alone.
+    glitch: roughness * 0.5 + granularity * 0.35 + dynamicRange * 0.25 - specularity * 0.3,
+    // Soft, organic, uncrowded. High edge density means structure, not drift.
+    drift: orientationEntropy * 0.5 - Math.min(1, density / 0.12) * 0.35 - roughness * 0.25,
+    // Machined: energy concentrated on the axes.
+    settle: orthogonality * 0.6 + (1 - orientationEntropy) * 0.4 - 0.15,
+    // Bright and specular — light coming off or through the subject.
+    bloom: specularity * 0.5 + brightness * 0.4 - roughness * 0.4,
+    // Something genuinely repeats.
+    weave: analysis.periodicity.strength * 0.9 - 0.1,
+  };
+
+  let best: MotionCharacter = 'still';
+  let bestScore = 0.34; // floor: below this, nothing has earned the right to move
+  for (const [character, score] of Object.entries(scores)) {
+    if (score > bestScore) {
+      bestScore = score;
+      best = character as MotionCharacter;
+    }
+  }
+  return best;
+}
+
+/** Per-character defaults. Period is in ms; amplitude is scaled below. */
+const MOTION_BASE: Record<MotionCharacter, { period: number; amplitude: number; trigger: MotionTrigger; tier: MotionTier }> = {
+  still: { period: 0, amplitude: 0, trigger: 'none', tier: 'ambient' },
+  shimmer: { period: 1400, amplitude: 0.5, trigger: 'view', tier: 'accent' },
+  glitch: { period: 620, amplitude: 0.55, trigger: 'view', tier: 'accent' },
+  drift: { period: 26000, amplitude: 0.12, trigger: 'scroll', tier: 'ambient' },
+  settle: { period: 520, amplitude: 0.45, trigger: 'view', tier: 'accent' },
+  bloom: { period: 1100, amplitude: 0.4, trigger: 'view', tier: 'accent' },
+  weave: { period: 22000, amplitude: 0.14, trigger: 'scroll', tier: 'ambient' },
+};
+
+export const MOTION_EASE: Record<MotionCharacter, string> = {
+  still: 'linear',
+  shimmer: 'cubic-bezier(0.4, 0, 0.2, 1)',
+  // Stepped, so the displacement reads as digital rather than as a slide.
+  glitch: 'steps(6, end)',
+  drift: 'cubic-bezier(0.37, 0, 0.63, 1)',
+  // No overshoot. A machined subject does not bounce.
+  settle: 'cubic-bezier(0.16, 1, 0.3, 1)',
+  bloom: 'cubic-bezier(0.22, 1, 0.36, 1)',
+  weave: 'linear',
+};
+
+function buildMotion(analysis: ImageAnalysis, character: MotionCharacter): MotionTokens {
+  const base = MOTION_BASE[character];
+  // A flat, quiet photograph cannot produce a busy page. Dynamic range is the
+  // frame's own energy, and motion is not allowed to exceed it.
+  const energy = lerp(0.55, 1, analysis.texture.dynamicRange);
+  return {
+    character,
+    tier: base.tier,
+    amplitude: round(base.amplitude * energy, 3),
+    period: Math.round(base.period),
+    easing: MOTION_EASE[character],
+    trigger: base.trigger,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -579,6 +746,8 @@ export function synthesize(analysis: ImageAnalysis): DesignTokens {
     surface,
     pattern,
     mesh: buildMesh(palette, analysis, sourceIsDark),
+    motion: buildMotion(analysis, classifyMotion(analysis)),
+    layout: buildLayout(geometry, analysis),
     meta: {
       geometry,
       description: describe(geometry, finish, voice, patternKind),
@@ -642,6 +811,21 @@ export function defaultTokens(): DesignTokens {
       { color: withAlpha('#38d1c4', 0.16), x: 82, y: 30, size: 62, opacity: 1 },
       { color: withAlpha('#8a6cff', 0.14), x: 50, y: 68, size: 78, opacity: 1 },
     ],
+    motion: {
+      character: 'drift',
+      tier: 'ambient',
+      amplitude: 0.12,
+      period: 26000,
+      easing: MOTION_EASE.drift,
+      trigger: 'scroll',
+    },
+    layout: {
+      archetype: 'technical',
+      heroAlign: 'left',
+      measure: 68,
+      featureColumns: 3,
+      imageRatio: '4 / 3',
+    },
     meta: {
       geometry: 'balanced',
       description: 'Waiting for a capture — this is the engine’s neutral resting state.',
