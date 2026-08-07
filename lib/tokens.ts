@@ -13,6 +13,67 @@ export type Geometry = 'sharp' | 'faceted' | 'balanced' | 'organic' | 'round';
 export type PatternKind = 'none' | 'stripes' | 'grid' | 'dots' | 'chevron' | 'weave' | 'scatter';
 export type TypeVoice = 'technical' | 'neutral' | 'editorial' | 'friendly';
 
+/**
+ * How the page moves.
+ *
+ * Motion is a material property: a wavy, specular surface shimmers; a granular,
+ * high-contrast one glitches. Every character below is chosen from signals
+ * `analyze.ts` already measures, so motion is decided the same way finish and
+ * geometry are — and `still` is a real answer, not a failure state.
+ */
+export type MotionCharacter =
+  | 'still'
+  | 'shimmer'
+  | 'glitch'
+  | 'drift'
+  | 'settle'
+  | 'bloom'
+  | 'weave';
+
+/**
+ * Scope, not just amplitude.
+ *
+ * `ambient` is page-scale and never asks for attention — the only tier allowed
+ * to loop, and only slowly. `accent` fires once as an element enters view and is
+ * where most captures should land. `signature` is section-scale and memorable,
+ * which is exactly why it is rationed to one element per page.
+ */
+export type MotionTier = 'ambient' | 'accent' | 'signature';
+
+export type MotionTrigger = 'none' | 'scroll' | 'view' | 'hover';
+
+export interface MotionTokens {
+  character: MotionCharacter;
+  tier: MotionTier;
+  /** 0..1. The single scalar every keyframe reads, so one clamp bounds them all. */
+  amplitude: number;
+  /** Duration or loop period in ms. */
+  period: number;
+  easing: string;
+  trigger: MotionTrigger;
+}
+
+export type LayoutArchetype = 'editorial' | 'technical' | 'gallery' | 'brutalist' | 'soft';
+
+/**
+ * Composition, expressed as tokens.
+ *
+ * Without this the markup can only ever be recoloured — the hero stays left, the
+ * features stay three-across, and two captures produce the same product in
+ * different paint. An archetype plus four scalars is enough for them to read as
+ * different products, and it costs no re-render: CSS branches on the attribute
+ * exactly as it already does on `data-finish`.
+ */
+export interface LayoutTokens {
+  archetype: LayoutArchetype;
+  heroAlign: 'left' | 'center';
+  /** Body copy line length, in ch. */
+  measure: number;
+  featureColumns: 2 | 3 | 4;
+  /** CSS aspect-ratio value for the capture figure. */
+  imageRatio: string;
+}
+
 export interface Palette {
   primary: string;
   secondary: string;
@@ -91,6 +152,8 @@ export interface DesignTokens {
     image: string;
   };
   mesh: MeshStop[];
+  motion: MotionTokens;
+  layout: LayoutTokens;
   meta: {
     geometry: Geometry;
     /** Human-readable summary, shown in the inspector. */
@@ -200,8 +263,26 @@ export function applyTokens(tokens: DesignTokens, target?: HTMLElement): void {
   set('--pattern-opacity', pattern.opacity);
   set('--mesh-image', meshToCss(tokens.mesh));
 
+  // --- Motion ---------------------------------------------------------------
+  // Four variables and two attributes are the entire motion surface. The
+  // keyframes live in CSS and read `--motion-amplitude`, so changing character
+  // or intensity never touches a component.
+  set('--motion-amplitude', tokens.motion.amplitude);
+  set('--motion-period', `${tokens.motion.period}ms`);
+  set('--motion-ease', tokens.motion.easing);
+
+  // --- Composition ----------------------------------------------------------
+  set('--measure', `${tokens.layout.measure}ch`);
+  set('--feature-cols', tokens.layout.featureColumns);
+  set('--image-ratio', tokens.layout.imageRatio);
+
   // Data attributes let CSS branch on material without inline styles.
   root.dataset.finish = surface.finish;
   root.dataset.geometry = tokens.meta.geometry;
   root.dataset.scheme = tokens.meta.sourceIsDark ? 'dark' : 'light';
+  root.dataset.motion = tokens.motion.character;
+  root.dataset.motionTier = tokens.motion.tier;
+  root.dataset.motionTrigger = tokens.motion.trigger;
+  root.dataset.layout = tokens.layout.archetype;
+  root.dataset.align = tokens.layout.heroAlign;
 }

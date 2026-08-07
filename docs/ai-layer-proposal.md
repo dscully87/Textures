@@ -1,7 +1,10 @@
 # Proposal: an AI layer for Textures
 
-**Status:** proposal, nothing implemented yet.
-**Target model:** `claude-opus-5` (vision + structured outputs).
+**Status:** implemented. See the README for how it is configured, and
+`lib/patch.ts` for the guards.
+**Shape as built:** CLIP zero-shot on device → DeepSeek (`deepseek-v4-pro`) over
+labels + measurements → validated token patch. The photograph never leaves the
+browser, so §8 below is stronger than proposed rather than weaker.
 
 ---
 
