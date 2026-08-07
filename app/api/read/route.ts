@@ -31,10 +31,37 @@ interface ReadRequest {
   swatchCount?: unknown;
 }
 
-function bad(reason: string, status = 200) {
+function bad(reason: string, status = 200, detail?: string) {
   // 200 on purpose for the degradation cases: the client is not broken, it just
   // has no reading, and an error status would put a red herring in the console.
-  return Response.json({ reading: null, reason }, { status });
+  // `reason` and `detail` are what make a misconfigured deploy diagnosable —
+  // without them a wrong model id and a missing key look identical from outside.
+  return Response.json({ reading: null, reason, detail }, { status });
+}
+
+/**
+ * Configuration probe.
+ *
+ * The refinement path is designed to fail invisibly, which is right for a
+ * visitor and useless for whoever just deployed it. This answers "is the key
+ * actually wired up in this environment?" without calling the provider — no
+ * cost, no rate limit, nothing to abuse — and without revealing the key itself.
+ *
+ *   curl https://<deployment>/api/read
+ */
+export function GET() {
+  const key = process.env.DEEPSEEK_API_KEY;
+  return Response.json({
+    configured: Boolean(key),
+    // Enough to confirm the right secret landed in the right environment, and
+    // far too little to reconstruct it.
+    keyLength: key ? key.length : 0,
+    model: process.env.DEEPSEEK_MODEL ?? DEFAULT_MODEL,
+    baseUrl: process.env.DEEPSEEK_BASE_URL ?? DEFAULT_BASE_URL,
+    hint: key
+      ? 'Key present. Capture something with refinement enabled; a failure will report its reason.'
+      : 'No DEEPSEEK_API_KEY in this environment. Vercel → Settings → Environment Variables, then redeploy — env changes do not apply to existing deployments.',
+  });
 }
 
 export async function POST(request: Request) {
@@ -91,8 +118,17 @@ export async function POST(request: Request) {
     );
 
     if (!response.ok) {
-      console.warn('[textures] provider returned', response.status);
-      return bad(`provider-${response.status}`);
+      // A 4xx is a configuration mistake — wrong model id, bad key, no credit —
+      // and the provider's own message names it precisely. Pass a truncated copy
+      // through, because guessing between those three from a bare status code is
+      // exactly the debugging session this is meant to prevent. 5xx is their
+      // outage, not our misconfiguration, so it gets no detail.
+      let detail: string | undefined;
+      if (response.status >= 400 && response.status < 500) {
+        detail = (await response.text().catch(() => '')).slice(0, 300) || undefined;
+      }
+      console.warn('[textures] provider returned', response.status, detail ?? '');
+      return bad(`provider-${response.status}`, 200, detail);
     }
 
     const payload = await response.json();

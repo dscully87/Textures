@@ -172,6 +172,28 @@ that way, rotating it is the only remedy.
 
 `DEEPSEEK_MODEL` and `DEEPSEEK_BASE_URL` are optional overrides.
 
+### Verifying a deploy
+
+Refinement is designed to fail invisibly — right for a visitor, useless for
+whoever just wired it up. Two things make it diagnosable.
+
+**Is the key in this environment?** `GET /api/read` answers without calling the
+provider, so it costs nothing and there is nothing to abuse:
+
+```bash
+curl https://<your-deployment>/api/read
+# { "configured": true, "keyLength": 35, "model": "deepseek-v4-pro", ... }
+```
+
+`configured: false` after adding the variable almost always means the deploy
+predates it — Vercel applies environment changes to *new* builds only, so
+redeploy.
+
+**Why didn't it refine?** With the toggle on, a failed capture prints the
+reason under the status line, and passes through the provider's own message on
+a 4xx. That distinction matters: a wrong `DEEPSEEK_MODEL`, an invalid key and an
+account with no credit are all bare 4xx from outside, and three different fixes.
+
 > `npm audit` reports advisories in `onnxruntime-node` and `sharp`. Those are the
 > Node halves of transformers.js; we only ever run the browser build, and both are
 > listed in `serverExternalPackages` so they stay out of the server bundle.

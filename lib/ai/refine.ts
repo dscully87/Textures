@@ -20,7 +20,10 @@ import { SceneReading, parseReading } from './reading';
 
 export interface RefinementStage {
   stage: 'classifying' | 'reading' | 'settled' | 'skipped';
+  /** Machine-readable cause when `skipped`, e.g. `no-api-key`, `provider-404`. */
   reason?: string;
+  /** The provider's own message on a configuration error, when there is one. */
+  detail?: string;
 }
 
 export interface Refinement extends PatchResult {
@@ -42,12 +45,18 @@ interface CachedReading {
  */
 const cache = new PerceptualCache<CachedReading>();
 
+interface ReadingResponse {
+  reading: SceneReading | null;
+  reason?: string;
+  detail?: string;
+}
+
 async function requestReading(
   analysis: ImageAnalysis,
   classification: Classification | null,
   heuristic: DesignTokens,
   signal: AbortSignal,
-): Promise<SceneReading | null> {
+): Promise<ReadingResponse> {
   const response = await fetch('/api/read', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -59,15 +68,21 @@ async function requestReading(
     }),
   });
 
-  if (!response.ok) return null;
+  const payload = await response.json().catch(() => null);
 
-  const payload = await response.json();
-  if (!payload?.reading) return null;
+  if (!response.ok || !payload?.reading) {
+    return {
+      reading: null,
+      reason: payload?.reason ?? `http-${response.status}`,
+      detail: payload?.detail,
+    };
+  }
 
   // Re-validated on this side too. The route already ran the same check, but the
   // client is where the tokens are applied, and the boundary that applies them
   // should not assume the boundary that fetched them did its job.
-  return parseReading(payload.reading, analysis.swatches.length);
+  const reading = parseReading(payload.reading, analysis.swatches.length);
+  return reading ? { reading } : { reading: null, reason: 'invalid-shape' };
 }
 
 /**
@@ -111,11 +126,17 @@ export async function refineTheme(
       if (signal?.aborted) return null;
 
       onStage?.({ stage: 'reading' });
-      reading = await requestReading(analysis, classification, base, signal ?? new AbortController().signal);
-      if (!reading) {
-        onStage?.({ stage: 'skipped', reason: 'no-reading' });
+      const response = await requestReading(
+        analysis,
+        classification,
+        base,
+        signal ?? new AbortController().signal,
+      );
+      if (!response.reading) {
+        onStage?.({ stage: 'skipped', reason: response.reason, detail: response.detail });
         return null;
       }
+      reading = response.reading;
       cache.set(hash, { reading, classification });
     }
 

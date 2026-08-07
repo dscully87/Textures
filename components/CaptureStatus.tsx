@@ -11,6 +11,41 @@ const STAGE_LABEL: Record<string, string> = {
   skipped: '',
 };
 
+/**
+ * Why a refinement didn't happen, in words.
+ *
+ * Refinement is designed to fail invisibly, which is right for a visitor and
+ * unhelpful for whoever is wiring the deploy up. These are shown only when the
+ * user has explicitly opted in — having asked for it, they are owed an
+ * explanation when it doesn't arrive.
+ */
+const SKIP_LABEL: Record<string, string> = {
+  'no-api-key': 'No API key in this environment',
+  'no-swatches': 'No usable colour in frame',
+  timeout: 'Model timed out — theme unchanged',
+  'network-error': 'Could not reach the model',
+  'unparseable-json': 'Model returned malformed JSON',
+  'invalid-shape': 'Model returned an unusable shape',
+  'empty-response': 'Model returned nothing',
+  error: 'Refinement failed — theme unchanged',
+};
+
+function skipLabel(reason?: string): string {
+  if (!reason) return 'Refinement unavailable';
+  if (SKIP_LABEL[reason]) return SKIP_LABEL[reason];
+  // provider-401, provider-404, provider-402… the status is the diagnosis.
+  const provider = reason.match(/^provider-(\d+)$/);
+  if (provider) {
+    const status = provider[1];
+    if (status === '401' || status === '403') return 'Model rejected the API key';
+    if (status === '404') return 'Model not found — check DEEPSEEK_MODEL';
+    if (status === '402') return 'Model account has no credit';
+    if (status === '429') return 'Rate limited by the model provider';
+    return `Model provider returned ${status}`;
+  }
+  return `Refinement unavailable (${reason})`;
+}
+
 export function CaptureStatus() {
   const { status, error, capture, reset, refineEnabled, setRefineEnabled, refineStage, refinement } =
     useEngine();
@@ -64,6 +99,19 @@ export function CaptureStatus() {
         <button type="button" className="btn btn-ghost" onClick={reset}>
           Reset
         </button>
+      )}
+
+      {/*
+        Shown only to someone who asked for refinement and didn't get it. The
+        provider's own message is included when there is one, because "model not
+        found" and "no credit" are the same bare 4xx from outside and a very
+        different fix.
+      */}
+      {refineEnabled && refineStage?.stage === 'skipped' && (
+        <p role="status" className="metric w-full text-ink-muted opacity-70">
+          {skipLabel(refineStage.reason)}
+          {refineStage.detail ? ` — ${refineStage.detail}` : ''}
+        </p>
       )}
     </div>
   );
