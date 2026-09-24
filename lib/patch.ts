@@ -14,13 +14,15 @@
 import { ImageAnalysis } from './analyze';
 import { buildPattern } from './patterns';
 import { Swatch } from './quantize';
-import { SceneReading } from './ai/reading';
+import { SceneReading, TypeVoice } from './ai/reading';
+import { DEFAULT_PAIRING, PAIRING_BY_ID } from './fonts';
+import { Mood } from './mood';
 import {
   MOTION_EASE,
   buildLayout,
+  buildPalette,
   buildSurface,
   buildTypography,
-  composePalette,
   rankSwatches,
 } from './synthesize';
 import {
@@ -53,6 +55,14 @@ const AMPLITUDE_MAX: Record<MotionTier, number> = {
   ambient: 0.15,
   accent: 0.7,
   signature: 1,
+};
+
+/** The reading's coarse type register, mapped onto the pairing library. */
+const VOICE_PAIRING: Record<TypeVoice, string> = {
+  technical: 'grotesk',
+  neutral: 'swiss',
+  editorial: 'soft-serif',
+  friendly: 'rounded',
 };
 
 const MEASURE: Record<string, number> = { narrow: 58, normal: 68, wide: 78 };
@@ -144,9 +154,9 @@ function patchMotion(
   };
 }
 
-function patchLayout(reading: SceneReading, base: LayoutTokens): LayoutTokens {
+function patchLayout(reading: SceneReading, base: LayoutTokens, mood: Mood): LayoutTokens {
   return {
-    archetype: reading.layout.archetype,
+    ...buildLayout(reading.layout.archetype, mood),
     heroAlign: reading.layout.heroAlign,
     measure: MEASURE[reading.layout.measure] ?? base.measure,
     featureColumns: reading.layout.featureColumns,
@@ -178,14 +188,11 @@ export function applyReading(
 
   let palette = base.palette;
   if (primarySrc) {
-    palette = composePalette(
-      primarySrc,
-      swatchAt(swatches, reading.palette.accentIndex, heuristic.accentSrc),
-      swatchAt(swatches, reading.palette.neutralIndex, heuristic.secondarySrc),
-      base.meta.sourceIsDark,
-      analysis.colorfulness,
-      analysis.texture.brightness,
-    );
+    palette = buildPalette(analysis, base.mood, base.palette.strategy, base.meta.sourceIsDark, {
+      primary: primarySrc,
+      accent: swatchAt(swatches, reading.palette.accentIndex, heuristic.accentSrc),
+      secondary: swatchAt(swatches, reading.palette.neutralIndex, heuristic.secondarySrc),
+    });
     if (primarySrc.hex !== heuristic.primarySrc?.hex) {
       report.applied.push(
         `palette: primary reassigned to ${primarySrc.hex}${
@@ -200,18 +207,19 @@ export function applyReading(
   const surface =
     finish === base.surface.finish && palette === base.palette
       ? base.surface
-      : buildSurface(analysis, palette, finish, base.meta.sourceIsDark);
+      : buildSurface(analysis, palette, finish, base.meta.sourceIsDark, base.mood);
   if (reading.finishOverride && reading.finishOverride !== base.surface.finish) {
     report.applied.push(`finish: ${base.surface.finish} → ${reading.finishOverride}`);
   }
 
   // --- Typography ---------------------------------------------------------
+  const pairing = PAIRING_BY_ID.get(VOICE_PAIRING[reading.voice]) ?? DEFAULT_PAIRING;
   const typography =
-    reading.voice === base.typography.voice
+    pairing.id === base.typography.pairing
       ? base.typography
-      : buildTypography(reading.voice, analysis);
-  if (reading.voice !== base.typography.voice) {
-    report.applied.push(`voice: ${base.typography.voice} → ${reading.voice}`);
+      : buildTypography(pairing, base.mood);
+  if (pairing.id !== base.typography.pairing) {
+    report.applied.push(`type: ${base.typography.label} → ${typography.label}`);
   }
 
   // --- Motif --------------------------------------------------------------
@@ -243,7 +251,7 @@ export function applyReading(
   }
 
   // --- Composition & motion ------------------------------------------------
-  const layout = patchLayout(reading, base.layout);
+  const layout = patchLayout(reading, base.layout, base.mood);
   if (layout.archetype !== base.layout.archetype) {
     report.applied.push(`layout: ${base.layout.archetype} → ${layout.archetype}`);
   }

@@ -17,8 +17,8 @@ export default function Home() {
           <div>
             <h1 className="font-heading text-2xl">Textures</h1>
             <p className="mt-1 max-w-xl text-sm text-ink-muted">
-              A visual-first engine: capture an object, and its color, material, geometry and motif
-              are compiled into the CSS custom properties this page is built from.
+              Photograph anything. Its colour, texture, mood and structure become a website — type,
+              layout, palette and motion included — that you can export as a theme kit.
             </p>
           </div>
           <CaptureStatus />
@@ -30,7 +30,10 @@ export default function Home() {
             <ThemeInspector />
           </div>
 
-          <div className="panel morph overflow-hidden">
+          {/* overflow-clip, not overflow-hidden: a hidden-overflow box is a scroll
+              container, and the site's scroll-driven motion would attach to it —
+              a box that never scrolls — and freeze. */}
+          <div className="panel morph overflow-clip">
             <GeneratedSite />
           </div>
         </div>

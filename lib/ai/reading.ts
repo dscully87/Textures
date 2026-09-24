@@ -13,7 +13,10 @@
  */
 
 import { ContextLabel, MaterialLabel } from '../vision/labels';
-import { Finish, MotionCharacter, MotionTier, MotionTrigger, PatternKind, TypeVoice } from '../tokens';
+import { Finish, MotionCharacter, MotionTier, MotionTrigger, PatternKind } from '../tokens';
+
+/** The reading's coarse type register; `lib/patch.ts` maps it onto a font pairing. */
+export type TypeVoice = 'technical' | 'neutral' | 'editorial' | 'friendly';
 
 export type LayoutArchetype = 'editorial' | 'technical' | 'gallery' | 'brutalist' | 'soft';
 export type Density = 'tight' | 'normal' | 'airy';
@@ -79,7 +82,7 @@ const MOTION_CHARACTERS: MotionCharacter[] = [
   'weave',
 ];
 const MOTION_TIERS: MotionTier[] = ['ambient', 'accent', 'signature'];
-const MOTION_TRIGGERS: MotionTrigger[] = ['none', 'scroll', 'view', 'hover'];
+const MOTION_TRIGGERS: MotionTrigger[] = ['none', 'scroll', 'view'];
 const LAYOUTS: LayoutArchetype[] = ['editorial', 'technical', 'gallery', 'brutalist', 'soft'];
 const VOICES: TypeVoice[] = ['technical', 'neutral', 'editorial', 'friendly'];
 const FINISHES: Finish[] = ['glossy', 'metallic', 'matte', 'rough', 'soft'];

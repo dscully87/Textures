@@ -10,7 +10,8 @@
  */
 
 import { useEngine } from './ThemeEngine';
-import { paletteContrast } from '@/lib/synthesize';
+import { describeMood, paletteContrast } from '@/lib/synthesize';
+import { MOOD_AXES } from '@/lib/mood';
 import { Palette } from '@/lib/tokens';
 
 function Bar({ label, value }: { label: string; value: number }) {
@@ -29,7 +30,9 @@ function Bar({ label, value }: { label: string; value: number }) {
   );
 }
 
-const ROLE_ORDER: Array<keyof Palette> = [
+type ColourRole = 'primary' | 'accent' | 'secondary' | 'surface' | 'surfaceAlt' | 'ink' | 'inkMuted' | 'border';
+
+const ROLE_ORDER: Array<ColourRole & keyof Palette> = [
   'primary',
   'accent',
   'secondary',
@@ -39,6 +42,14 @@ const ROLE_ORDER: Array<keyof Palette> = [
   'inkMuted',
   'border',
 ];
+
+const MOOD_LABEL: Record<string, [string, string]> = {
+  energy: ['calm', 'loud'],
+  warmth: ['cool', 'warm'],
+  order: ['organic', 'structured'],
+  density: ['airy', 'packed'],
+  polish: ['raw', 'refined'],
+};
 
 const ROLE_LABEL: Record<string, string> = {
   primary: 'primary',
@@ -70,7 +81,29 @@ export function ThemeInspector() {
       </header>
 
       <section>
-        <h3 className="metric mb-3 uppercase tracking-[0.14em] text-ink-muted">Palette</h3>
+        <h3 className="metric mb-3 uppercase tracking-[0.14em] text-ink-muted">
+          Mood — {describeMood(tokens.mood)}
+        </h3>
+        <div className="flex flex-col gap-2">
+          {MOOD_AXES.map((axis) => (
+            <div key={axis} className="flex items-center gap-3">
+              <span className="metric w-16 shrink-0 text-ink-muted">{MOOD_LABEL[axis][0]}</span>
+              <div className="relative h-1.5 flex-1 rounded-full bg-ink/10">
+                <span
+                  className="absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent transition-[left] duration-700 ease-out"
+                  style={{ left: `${Math.round(tokens.mood[axis] * 100)}%` }}
+                />
+              </div>
+              <span className="metric w-20 shrink-0 text-right text-ink-muted">{MOOD_LABEL[axis][1]}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <h3 className="metric mb-3 uppercase tracking-[0.14em] text-ink-muted">
+          Palette — {tokens.palette.strategy}
+        </h3>
         <div className="grid grid-cols-4 gap-2">
           {ROLE_ORDER.map((role) => (
             <div key={role} className="flex flex-col gap-1.5">
@@ -84,6 +117,20 @@ export function ThemeInspector() {
             </div>
           ))}
         </div>
+        {tokens.palette.pops.length > 0 && (
+          <div className="mt-3 flex gap-2">
+            {tokens.palette.pops.map((pop, i) => (
+              <span
+                key={i}
+                className="metric flex h-8 flex-1 items-center justify-center rounded-md"
+                style={{ backgroundColor: pop.color, color: pop.on }}
+                title={pop.color}
+              >
+                pop {i + 1}
+              </span>
+            ))}
+          </div>
+        )}
       </section>
 
       <section>
@@ -125,6 +172,9 @@ export function ThemeInspector() {
             <Bar label="dynamic range" value={analysis.texture.dynamicRange} />
             <Bar label="colorfulness" value={analysis.colorfulness} />
             <Bar label="periodicity" value={analysis.periodicity.strength} />
+            <Bar label="negative space" value={analysis.composition.calm} />
+            <Bar label="banding" value={analysis.composition.banding} />
+            <Bar label="hue families" value={analysis.colour.hueCount / 4} />
           </div>
         </section>
       )}
@@ -133,17 +183,21 @@ export function ThemeInspector() {
         <h3 className="metric mb-3 uppercase tracking-[0.14em] text-ink-muted">Decisions</h3>
         <dl className="grid grid-cols-2 gap-x-4 gap-y-2">
           {[
+            ['layout', tokens.layout.archetype],
+            ['type', tokens.typography.label],
+            ['sections', `${tokens.layout.sections.hero} · ${tokens.layout.sections.features}`],
+            ['motion', `${tokens.motion.character} (${tokens.motion.tier})`],
             ['geometry', tokens.meta.geometry],
             ['radius unit', `${tokens.radius.unit}px`],
             ['finish', tokens.surface.finish],
             ['backdrop blur', `${tokens.surface.blur}px`],
-            ['type voice', tokens.typography.voice],
             ['heading weight', String(tokens.typography.headingWeight)],
             ['tracking', `${tokens.typography.tracking}em`],
             ['space unit', `${tokens.space.unit}×`],
             ['motif', tokens.pattern.kind],
             ['motif pitch', tokens.pattern.kind === 'none' ? '—' : `${tokens.pattern.period}px`],
             ['grain', tokens.surface.grain.toFixed(3)],
+            ['photo texture', tokens.texture.tileOpacity.toFixed(2)],
             ['confidence', `${Math.round(tokens.meta.confidence * 100)}%`],
           ].map(([label, value]) => (
             <div key={label} className="flex items-baseline justify-between gap-2 border-b border-line/60 pb-1.5">

@@ -2,9 +2,10 @@
  * Synthesis: analysis numbers in, design tokens out.
  *
  * This is the opinionated half of the engine. `analyze.ts` measures the
- * photograph; this module decides what those measurements *mean* for an
- * interface — which color leads, how round the corners get, whether the
- * surfaces read as glass or as stone, how much air the layout breathes.
+ * photograph, `mood.ts` condenses those measurements into five perceptual axes,
+ * and this module decides what the mood *means* for a website — which layout,
+ * which typefaces, how the palette is built, how much of the photograph shows
+ * through as texture, how the page moves.
  *
  * Every rule here is deterministic, so the same photograph always produces the
  * same site.
@@ -16,33 +17,39 @@ import {
   ensureContrast,
   hexToHsl,
   hslToHex,
-  isLight,
   mixHex,
-  rotateHue,
   setLightness,
   withAlpha,
 } from './color';
+import { ARCHETYPE_COPY, RESTING_COPY } from './copy';
+import { DEFAULT_PAIRING, FONT_FAMILIES, FONT_PAIRINGS, FontPairing, fontStack } from './fonts';
+import { ARCHETYPES, ARCHETYPE_BY_ID } from './layouts';
+import { Mood, NEUTRAL_MOOD, computeMood, nearest } from './mood';
 import { buildGrain, buildPattern } from './patterns';
 import { Swatch } from './quantize';
 import {
+  ColourStrategy,
   DesignTokens,
-  FONT_STACKS,
   Finish,
   Geometry,
+  LayoutArchetype,
+  LayoutTokens,
   MeshStop,
   MotionCharacter,
   MotionTier,
   MotionTokens,
   MotionTrigger,
-  LayoutArchetype,
-  LayoutTokens,
   Palette,
   PatternKind,
-  TypeVoice,
+  PopColour,
+  TypographyTokens,
 } from './tokens';
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * Math.min(1, Math.max(0, t));
 const round = (v: number, places = 3) => Number(v.toFixed(places));
+const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
+const hsl = (h: number, s: number, l: number) =>
+  hslToHex({ h: ((h % 360) + 360) % 360, s: clamp(s, 0, 1), l: clamp(l, 0, 1) });
 
 /** Stable 32-bit hash, so mesh placement is reproducible per palette. */
 function hash(str: string): number {
@@ -64,13 +71,16 @@ function hueDistance(a: number, b: number): number {
 // ---------------------------------------------------------------------------
 
 /**
- * Rank a swatch by how well it would carry an interface: chroma matters most,
- * mid lightness is preferred (a near-black or near-white "brand color" cannot
- * anchor anything), and coverage in the photo breaks ties.
+ * Rank a swatch by how well it would carry an interface: colourfulness matters
+ * most, mid lightness is preferred (a near-black or near-white "brand color"
+ * cannot anchor anything), and coverage in the photo breaks ties.
+ *
+ * Ranked on chroma rather than HSL saturation: HSL reports an off-white as
+ * 80–100% saturated, which let a white background outrank the subject.
  */
 function vividness(s: Swatch): number {
   const midness = 1 - Math.abs(s.lightness - 0.55) * 1.5;
-  return s.saturation * Math.max(0.05, midness) * (0.4 + s.population);
+  return s.chroma * Math.max(0.05, midness) * (0.4 + s.population);
 }
 
 /**
@@ -94,7 +104,7 @@ function makeLabelable(color: string, target = 4.5): { color: string; onColor: s
   const initial = poles(color);
   if (initial.ratio >= target) return { color, onColor: initial.onColor };
 
-  const hsl = hexToHsl(color);
+  const base = hexToHsl(color);
   // White already wins ⇒ the color is on the dark side of the middle; pushing it
   // darker widens that gap. Otherwise push it lighter for black text.
   const direction = initial.onColor === '#ffffff' ? -1 : 1;
@@ -103,7 +113,7 @@ function makeLabelable(color: string, target = 4.5): { color: string; onColor: s
   let bestPole = initial;
 
   for (let step = 1; step <= 100; step++) {
-    const candidate = hslToHex({ ...hsl, l: Math.min(1, Math.max(0, hsl.l + direction * step * 0.01)) });
+    const candidate = hslToHex({ ...base, l: clamp(base.l + direction * step * 0.01, 0, 1) });
     const p = poles(candidate);
     if (p.ratio > bestPole.ratio) {
       bestPole = p;
@@ -115,13 +125,71 @@ function makeLabelable(color: string, target = 4.5): { color: string; onColor: s
   return { color: bestColor, onColor: bestPole.onColor };
 }
 
+const DEFAULT_WEIGHTS: Record<ColourStrategy, Palette['weights']> = {
+  tonal: { ground: 0.7, support: 0.25, accent: 0.05 },
+  accent: { ground: 0.6, support: 0.3, accent: 0.1 },
+  pop: { ground: 0.4, support: 0.35, accent: 0.25 },
+  moody: { ground: 0.8, support: 0.15, accent: 0.05 },
+};
+
+interface PaletteParts {
+  strategy: ColourStrategy;
+  primary: string;
+  accent: string;
+  secondary: string;
+  surface: string;
+  surfaceAlt: string;
+  ink: string;
+  pops?: string[];
+  weights?: Palette['weights'];
+  dark: boolean;
+}
+
 /**
- * Turn three chosen source swatches into a full, readable palette.
+ * Every strategy ends here, so every strategy gets the same guarantees: body
+ * text at 7:1 on the surface (and 4.5:1 on the alternate surface), muted text at
+ * 4.5:1 on both, the accent at the 3:1 floor WCAG sets for non-text UI and large
+ * display type (it colours the headline's emphasised phrase), and a label
+ * colour that clears 4.5:1 on the primary and on every pop colour.
+ */
+function finishPalette(parts: PaletteParts): Palette {
+  const { color: primary, onColor: onPrimary } = makeLabelable(parts.primary);
+  // Tinted sections sit on `surfaceAlt`, so both text roles are checked there too.
+  const ink = ensureContrast(ensureContrast(parts.ink, parts.surface, 7), parts.surfaceAlt, 4.5);
+  const inkMuted = ensureContrast(
+    ensureContrast(mixHex(ink, parts.surface, 0.42), parts.surface, 4.5),
+    parts.surfaceAlt,
+    4.5,
+  );
+  const border = mixHex(parts.surface, ink, parts.dark ? 0.16 : 0.13);
+  const accent = ensureContrast(parts.accent, parts.surface, 3);
+  const pops: PopColour[] = (parts.pops ?? []).map((c) => {
+    const { color, onColor } = makeLabelable(c);
+    return { color, on: onColor };
+  });
+
+  return {
+    strategy: parts.strategy,
+    primary,
+    secondary: parts.secondary,
+    accent,
+    surface: parts.surface,
+    surfaceAlt: parts.surfaceAlt,
+    ink,
+    inkMuted,
+    border,
+    onPrimary,
+    pops,
+    weights: parts.weights ?? DEFAULT_WEIGHTS[parts.strategy],
+  };
+}
+
+/**
+ * The `accent` strategy: a neutral page with one brand colour and a second voice.
  *
- * Split out from `buildPalette` so the AI layer can supply its own role
- * assignment and still go through the identical treatment — chroma lifting,
- * accent tempering, neutral tinting and every contrast repair. The model gets to
- * decide *which* measured colour leads; it does not get to skip the guards.
+ * Exported so the AI layer can supply its own role assignment and still go
+ * through the identical treatment — chroma lifting, accent tempering, neutral
+ * tinting and every contrast repair.
  */
 export function composePalette(
   primarySrc: Swatch,
@@ -132,69 +200,125 @@ export function composePalette(
   brightness: number,
 ): Palette {
   // A washed-out subject still needs a usable brand color, so lift very low
-  // chroma into a workable range rather than shipping mud — then make sure a
-  // label can actually sit on top of it.
-  const { color: primary, onColor: onPrimary } = makeLabelable(
-    (() => {
-      const hsl = hexToHsl(primarySrc.hex);
-      const s = Math.max(hsl.s, 0.28);
-      const l = Math.min(0.62, Math.max(0.38, hsl.l));
-      return hslToHex({ h: hsl.h, s, l });
-    })(),
-  );
+  // chroma into a workable range rather than shipping mud.
+  const base = hexToHsl(primarySrc.hex);
+  const primary = hsl(base.h, Math.max(base.s, 0.28), clamp(base.l, 0.38, 0.62));
   const primaryHue = hexToHsl(primary).h;
   const primarySat = hexToHsl(primary).s;
 
   // Accent saturation is *tempered*, never maximized. A complement taken at full
-  // chroma reads as an alarm rather than an accent — rotating a saturated orange
-  // by 150° and pinning it at s=1 gives electric cyan, which belongs to no
-  // photograph. Keeping accent chroma at or below the primary's holds the pair
-  // in the same material world.
+  // chroma reads as an alarm rather than an accent.
   const accentLightness = sourceIsDark ? 0.62 : 0.46;
-  const accentRaw = accentSrc
-    ? hslToHex({
-        h: accentSrc.hue,
-        s: Math.min(0.65, Math.max(0.3, accentSrc.saturation)),
-        l: accentLightness,
-      })
+  const accent = accentSrc
+    ? hsl(accentSrc.hue, clamp(accentSrc.saturation, 0.3, 0.65), accentLightness)
     : // Nothing complementary in frame — derive one so the UI still has a second
       // voice for CTAs and highlights.
-      hslToHex({
-        h: (primaryHue + (colorfulness > 0.4 ? 150 : 32)) % 360,
-        s: Math.min(0.6, Math.max(0.3, primarySat * 0.8)),
-        l: accentLightness,
-      });
+      hsl(primaryHue + (colorfulness > 0.4 ? 150 : 32), clamp(primarySat * 0.8, 0.3, 0.6), accentLightness);
 
   const secondary = secondarySrc
     ? setLightness(secondarySrc.hex, lerp(0.45, 0.6, secondarySrc.saturation))
-    : mixHex(primary, accentRaw, 0.5);
+    : mixHex(primary, accent, 0.5);
 
   // Keep a whisper of the subject's hue in the neutrals — a warm wooden object
   // yields warm greys, a cold steel one yields cool greys.
-  const neutralHue = hexToHsl(primary).h;
   const tint = lerp(0.02, 0.09, colorfulness);
-
   const surface = sourceIsDark
-    ? hslToHex({ h: neutralHue, s: tint + 0.03, l: lerp(0.06, 0.11, brightness) })
-    : hslToHex({ h: neutralHue, s: tint, l: lerp(0.99, 0.94, colorfulness) });
+    ? hsl(primaryHue, tint + 0.03, lerp(0.06, 0.11, brightness))
+    : hsl(primaryHue, tint, lerp(0.99, 0.94, colorfulness));
 
-  const surfaceAlt = sourceIsDark
-    ? mixHex(surface, primary, 0.14)
-    : mixHex(surface, primary, 0.07);
+  return finishPalette({
+    strategy: 'accent',
+    primary,
+    accent,
+    secondary,
+    surface,
+    surfaceAlt: mixHex(surface, primary, sourceIsDark ? 0.14 : 0.07),
+    ink: sourceIsDark ? hsl(primaryHue, 0.08, 0.96) : hsl(primaryHue, 0.22, 0.12),
+    dark: sourceIsDark,
+  });
+}
 
-  const inkBase = sourceIsDark
-    ? hslToHex({ h: neutralHue, s: 0.08, l: 0.96 })
-    : hslToHex({ h: neutralHue, s: 0.22, l: 0.12 });
+/**
+ * The `tonal` strategy: one colour family, carried by the surface itself.
+ *
+ * This is what a lake needs and what the neutral-page strategy could never
+ * give it — the whole page takes the water's hue, deep or pale, with the brand
+ * colour and accent as darker and lighter notes of the same family.
+ */
+function composeTonal(base: Swatch, second: Swatch | undefined, dark: boolean, mood: Mood): Palette {
+  const h = base.hue;
+  const s = clamp(base.chroma * 1.6 + 0.15, 0.25, 0.6);
+  const accentHue =
+    second && second.chroma > 0.08 && hueDistance(second.hue, h) < 90
+      ? second.hue
+      : h + (mood.warmth > 0.5 ? -28 : 28);
 
-  const ink = ensureContrast(inkBase, surface, 7);
-  const inkMuted = ensureContrast(mixHex(ink, surface, 0.42), surface, 4.5);
-  const border = mixHex(surface, ink, sourceIsDark ? 0.16 : 0.13);
+  return finishPalette({
+    strategy: 'tonal',
+    primary: hsl(h, Math.max(0.42, s), dark ? 0.62 : 0.36),
+    accent: hsl(accentHue, 0.48, dark ? 0.68 : 0.42),
+    secondary: hsl(h, s * 0.7, dark ? 0.42 : 0.72),
+    surface: dark ? hsl(h, Math.min(0.35, s * 0.6), 0.11) : hsl(h, Math.min(0.42, s * 0.6), 0.95),
+    surfaceAlt: dark ? hsl(h, Math.min(0.35, s * 0.6), 0.16) : hsl(h, Math.min(0.45, s * 0.7), 0.89),
+    ink: dark ? hsl(h, 0.25, 0.93) : hsl(h, 0.45, 0.13),
+    dark,
+  });
+}
 
-  // The accent carries badges, meters and small marks, so it has to clear the
-  // 3:1 floor WCAG sets for non-text UI components against its own background.
-  const accent = ensureContrast(accentRaw, surface, 3);
+/**
+ * The `pop` strategy: several saturated colours as blocks and stickers, on a
+ * stark ground — the graffiti-wall and sweet-shop register. Colours come from
+ * the photograph first; if it only has one or two, triadic companions are
+ * derived so the page still has enough voices to be loud.
+ */
+function composePop(ranked: Swatch[], lead: Swatch, dark: boolean): Palette {
+  const hues: number[] = [lead.hue];
+  for (const s of [...ranked].sort((a, b) => b.chroma * Math.sqrt(b.population) - a.chroma * Math.sqrt(a.population))) {
+    if (hues.length >= 4) break;
+    if (s.chroma < 0.18) continue;
+    if (hues.every((h) => hueDistance(h, s.hue) >= 40)) hues.push(s.hue);
+  }
+  for (const offset of [120, 210, 60, 300]) {
+    if (hues.length >= 4) break;
+    const candidate = (lead.hue + offset) % 360;
+    if (hues.every((h) => hueDistance(h, candidate) >= 40)) hues.push(candidate);
+  }
 
-  return { primary, secondary, accent, surface, surfaceAlt, ink, inkMuted, border, onPrimary };
+  // Saturated but not neon: s 0.7 keeps the set in one printed-ink world.
+  const pops = hues.map((h, i) => hsl(h, 0.7, i % 2 === 0 ? 0.52 : 0.58));
+  const groundHue = lead.hue;
+
+  return finishPalette({
+    strategy: 'pop',
+    primary: pops[0],
+    accent: pops[1],
+    secondary: pops[2],
+    surface: dark ? hsl(groundHue, 0.08, 0.06) : hsl(45, 0.35, 0.95),
+    surfaceAlt: dark ? hsl(groundHue, 0.08, 0.11) : hsl(45, 0.3, 0.89),
+    ink: dark ? '#f6f2ea' : '#121010',
+    pops,
+    dark,
+  });
+}
+
+/**
+ * The `moody` strategy: dark, low-chroma, hushed. A greyscale or night frame
+ * has no brand colour to offer, so it gets candlelight — a warm bone tone —
+ * rather than an arbitrary hue.
+ */
+function composeMoody(lead: Swatch | undefined, chromatic: boolean): Palette {
+  const h = chromatic && lead ? lead.hue : 38;
+  const s = chromatic && lead ? Math.min(0.4, lead.saturation) : 0.35;
+  return finishPalette({
+    strategy: 'moody',
+    primary: hsl(h, s, 0.7),
+    accent: hsl(h + (chromatic ? 25 : 0), chromatic ? 0.35 : 0.5, 0.6),
+    secondary: hsl(h, 0.1, 0.35),
+    surface: hsl(h, chromatic ? 0.12 : 0.05, 0.07),
+    surfaceAlt: hsl(h, chromatic ? 0.12 : 0.05, 0.11),
+    ink: hsl(h, 0.12, 0.9),
+    dark: true,
+  });
 }
 
 /** The neutral swatch used when a photograph yields nothing usable. */
@@ -205,6 +329,7 @@ export const FALLBACK_SWATCH: Swatch = {
   saturation: 0.2,
   lightness: 0.43,
   hue: 218,
+  chroma: 0.16,
 };
 
 /**
@@ -225,11 +350,11 @@ export function rankSwatches(analysis: ImageAnalysis) {
   // is noise, not a second voice.
   const accentSrc = ranked
     .slice(1)
-    .filter((s) => s.saturation > 0.12 && s.population > 0.03 && hueDistance(s.hue, primaryHue) > 25)
+    .filter((s) => s.chroma > 0.08 && s.population > 0.03 && hueDistance(s.hue, primaryHue) > 25)
     .sort(
       (a, b) =>
-        hueDistance(b.hue, primaryHue) * b.saturation * (0.5 + b.population) -
-        hueDistance(a.hue, primaryHue) * a.saturation * (0.5 + a.population),
+        hueDistance(b.hue, primaryHue) * b.chroma * (0.5 + b.population) -
+        hueDistance(a.hue, primaryHue) * a.chroma * (0.5 + a.population),
     )[0];
 
   const secondarySrc = ranked
@@ -239,23 +364,72 @@ export function rankSwatches(analysis: ImageAnalysis) {
   return { ranked, primarySrc, accentSrc, secondarySrc };
 }
 
-function buildPalette(analysis: ImageAnalysis): Palette {
-  const { primarySrc, accentSrc, secondarySrc } = rankSwatches(analysis);
-  // Scheme follows the photograph: a night shot should not produce a white site.
-  const sourceIsDark = analysis.texture.brightness < 0.46;
+/**
+ * The swatch that carries a tonal page: coverage times colour, so a sky that
+ * fills a tenth of the frame in real blue beats a warm grey that fills a fifth.
+ */
+function tonalBase(analysis: ImageAnalysis): Swatch {
+  const coloured = analysis.swatches.filter((s) => s.chroma > 0.05);
+  if (coloured.length === 0) return rankSwatches(analysis).primarySrc;
+  return [...coloured].sort((a, b) => b.population * b.chroma - a.population * a.chroma)[0];
+}
 
-  return composePalette(
-    primarySrc,
-    accentSrc,
-    secondarySrc,
-    sourceIsDark,
-    analysis.colorfulness,
-    analysis.texture.brightness,
-  );
+/** Which way to build the palette, from how colour is distributed and how loud the frame is. */
+export function chooseStrategy(analysis: ImageAnalysis, mood: Mood): ColourStrategy {
+  const { colour, texture } = analysis;
+  // Night frames and dim greyscale get hushed palettes. A bright greyscale frame
+  // (fog, paper, snow) is not moody — it falls through to a neutral page.
+  if (texture.brightness < 0.28 || (colour.chromaticShare < 0.06 && texture.brightness < 0.5)) {
+    return 'moody';
+  }
+  if (analysis.colorfulness >= 0.38 && (mood.energy >= 0.6 || colour.hueCount >= 3)) return 'pop';
+  if (colour.hueCount <= 2 && mood.energy < 0.55 && colour.chromaticShare >= 0.15) return 'tonal';
+  return 'accent';
+}
+
+/** Light or dark page. Moody is always dark; tonal leans light, since its surface carries colour. */
+export function chooseScheme(analysis: ImageAnalysis, strategy: ColourStrategy): boolean {
+  if (strategy === 'moody') return true;
+  return analysis.texture.brightness < (strategy === 'tonal' ? 0.38 : 0.46);
+}
+
+/** Optional role overrides, e.g. from the AI layer. Anything absent is chosen heuristically. */
+export interface PaletteRoles {
+  primary?: Swatch;
+  accent?: Swatch;
+  secondary?: Swatch;
+}
+
+export function buildPalette(
+  analysis: ImageAnalysis,
+  mood: Mood,
+  strategy: ColourStrategy,
+  dark: boolean,
+  roles: PaletteRoles = {},
+): Palette {
+  const heuristic = rankSwatches(analysis);
+  switch (strategy) {
+    case 'tonal':
+      return composeTonal(roles.primary ?? tonalBase(analysis), roles.accent ?? heuristic.accentSrc, dark, mood);
+    case 'pop':
+      return composePop(heuristic.ranked, roles.primary ?? heuristic.primarySrc, dark);
+    case 'moody':
+      return composeMoody(roles.primary ?? heuristic.primarySrc, analysis.colour.chromaticShare >= 0.06);
+    case 'accent':
+    default:
+      return composePalette(
+        roles.primary ?? heuristic.primarySrc,
+        roles.accent ?? heuristic.accentSrc,
+        roles.secondary ?? heuristic.secondarySrc,
+        dark,
+        analysis.colorfulness,
+        analysis.texture.brightness,
+      );
+  }
 }
 
 // ---------------------------------------------------------------------------
-// Geometry → border radii
+// Geometry
 // ---------------------------------------------------------------------------
 
 /**
@@ -280,20 +454,26 @@ function classifyGeometry(score: number): Geometry {
   return 'round';
 }
 
-const RADIUS_UNIT: Record<Geometry, number> = {
-  sharp: 0,
-  faceted: 4,
-  balanced: 10,
-  organic: 20,
-  round: 30,
+/**
+ * Corner radius comes from the layout's character, nudged by how organic the
+ * subject is: a poster wall and a concrete block are square, sweets are pills.
+ */
+const RADIUS_BY_ARCHETYPE: Record<LayoutArchetype, number> = {
+  serene: 10,
+  editorial: 4,
+  gallery: 2,
+  technical: 4,
+  brutalist: 0,
+  soft: 26,
+  street: 0,
 };
 
 // ---------------------------------------------------------------------------
 // Surface finish
 // ---------------------------------------------------------------------------
 
-export function classifyFinish(analysis: ImageAnalysis, paletteSaturation: number): Finish {
-  const { specularity, roughness, granularity, dynamicRange } = analysis.texture;
+export function classifyFinish(analysis: ImageAnalysis, paletteSaturation: number, mood = computeMood(analysis)): Finish {
+  const { specularity, roughness, dynamicRange } = analysis.texture;
 
   // Roughness carries a heavy negative weight on purpose. Bright speckle alone
   // is not gloss — coarse aggregate throws just as many blown-out pixels as
@@ -304,8 +484,8 @@ export function classifyFinish(analysis: ImageAnalysis, paletteSaturation: numbe
     // Chrome and steel glint just as hard as glass but carry no color.
     return paletteSaturation < 0.22 ? 'metallic' : 'glossy';
   }
-  if (roughness > 0.52 && granularity > 0.3) return 'rough';
-  if (roughness < 0.22 && dynamicRange < 0.6) return 'soft';
+  if (mood.polish < 0.3) return 'rough';
+  if (mood.polish > 0.7) return 'soft';
   return 'matte';
 }
 
@@ -325,6 +505,7 @@ export function buildSurface(
   palette: Palette,
   finish: Finish,
   sourceIsDark: boolean,
+  mood: Mood = computeMood(analysis),
 ): SurfaceTokens {
   const { specularity, roughness } = analysis.texture;
 
@@ -336,14 +517,6 @@ export function buildSurface(
     soft: 12,
     matte: 7,
     rough: 3,
-  };
-
-  const grainByFinish: Record<Finish, number> = {
-    glossy: 0.02,
-    metallic: 0.03,
-    soft: 0.035,
-    matte: 0.05,
-    rough: 0.085,
   };
 
   const shiny = finish === 'glossy' || finish === 'metallic';
@@ -365,10 +538,15 @@ export function buildSurface(
     layers.push(`inset 0 -1px 0 ${withAlpha('#000000', 0.16)}`);
   }
 
+  // Grain used to sit at 2–9% under an overlay blend, which on most screens is
+  // indistinguishable from none. It now tracks how raw and loud the subject is:
+  // a still lake keeps a whisper of tooth, a graffiti wall gets real grit.
+  const grit = (1 - mood.polish) * 0.7 + mood.energy * 0.3;
+
   return {
     finish,
     blur: blurByFinish[finish],
-    grain: round(grainByFinish[finish] * lerp(0.7, 1.35, roughness), 4),
+    grain: round(lerp(0.025, 0.16, grit), 4),
     borderAlpha: round(shiny ? 0.1 + specularity * 0.14 : 0.06, 3),
     fillAlpha: round(shiny ? 0.55 : finish === 'rough' ? 0.95 : 0.8, 2),
     shadow: layers.join(', '),
@@ -380,100 +558,65 @@ export function buildSurface(
 }
 
 // ---------------------------------------------------------------------------
-// Typography & density
+// Layout, typography & density
 // ---------------------------------------------------------------------------
 
-function classifyVoice(geometry: Geometry, analysis: ImageAnalysis): TypeVoice {
-  const stark = analysis.texture.dynamicRange > 0.7 && analysis.colorfulness < 0.35;
-
-  switch (geometry) {
-    case 'sharp':
-      return 'technical';
-    case 'faceted':
-      return stark ? 'technical' : 'neutral';
-    case 'balanced':
-      return stark ? 'technical' : 'neutral';
-    case 'organic':
-      return 'editorial';
-    case 'round':
-    default:
-      return 'friendly';
-  }
+export function chooseArchetype(mood: Mood): LayoutArchetype {
+  return nearest(mood, ARCHETYPES).id;
 }
 
-interface TypographyTokens {
-  voice: TypeVoice;
-  headingFont: string;
-  bodyFont: string;
-  headingWeight: number;
-  tracking: number;
-  leading: number;
-  scale: number;
+/**
+ * The pairing closest to the mood among those that belong in this layout. A
+ * layout constrains type — a poster wall never gets a hairline serif — and the
+ * mood picks within that range.
+ */
+export function choosePairing(mood: Mood, archetype: LayoutArchetype): FontPairing {
+  const suited = FONT_PAIRINGS.filter((p) => p.layouts.includes(archetype));
+  return nearest(mood, suited.length ? suited : FONT_PAIRINGS);
 }
 
-export function buildTypography(voice: TypeVoice, analysis: ImageAnalysis): TypographyTokens {
-  const contrastPush = analysis.texture.dynamicRange;
-
-  const base: Record<TypeVoice, Omit<TypographyTokens, 'voice'>> = {
-    technical: {
-      headingFont: FONT_STACKS.technical,
-      bodyFont: FONT_STACKS.neutral,
-      headingWeight: 700,
-      tracking: -0.035,
-      leading: 1.5,
-      scale: 1.04,
-    },
-    neutral: {
-      headingFont: FONT_STACKS.neutral,
-      bodyFont: FONT_STACKS.neutral,
-      headingWeight: 650,
-      tracking: -0.025,
-      leading: 1.6,
-      scale: 1,
-    },
-    editorial: {
-      headingFont: FONT_STACKS.editorial,
-      bodyFont: FONT_STACKS.neutral,
-      headingWeight: 500,
-      tracking: -0.012,
-      leading: 1.7,
-      scale: 1.06,
-    },
-    friendly: {
-      headingFont: FONT_STACKS.friendly,
-      bodyFont: FONT_STACKS.friendly,
-      headingWeight: 800,
-      tracking: -0.005,
-      leading: 1.72,
-      scale: 0.98,
-    },
-  };
-
-  const t = base[voice];
+export function buildTypography(pairing: FontPairing, mood: Mood = NEUTRAL_MOOD): TypographyTokens {
+  const heading = FONT_FAMILIES[pairing.heading];
+  const body = FONT_FAMILIES[pairing.body];
+  const accent = FONT_FAMILIES[pairing.accent];
   return {
-    voice,
-    ...t,
-    // A high-contrast subject earns heavier, tighter display type.
-    headingWeight: Math.round(lerp(t.headingWeight - 50, t.headingWeight + 50, contrastPush)),
-    tracking: round(t.tracking - contrastPush * 0.008, 4),
-    scale: round(t.scale * lerp(0.97, 1.06, contrastPush), 3),
+    pairing: pairing.id,
+    label: heading.name === body.name ? heading.name : `${heading.name} / ${body.name}`,
+    headingFont: fontStack(pairing.heading),
+    bodyFont: fontStack(pairing.body),
+    accentFont: fontStack(pairing.accent),
+    families: { heading: heading.name, body: body.name, accent: accent.name },
+    headingWeight: pairing.headingWeight,
+    bodyWeight: pairing.bodyWeight,
+    tracking: pairing.tracking,
+    leading: pairing.leading,
+    // A loud subject earns bigger display type; a quiet one stays measured.
+    scale: round(pairing.scale * lerp(0.95, 1.08, mood.energy), 3),
+    uppercase: pairing.uppercase,
+    italic: pairing.italic,
   };
 }
 
-function buildSpace(geometry: Geometry, analysis: ImageAnalysis) {
-  // Stark, angular subjects compress; organic ones breathe.
-  const byGeometry: Record<Geometry, number> = {
-    sharp: 0.86,
-    faceted: 0.93,
-    balanced: 1,
-    organic: 1.12,
-    round: 1.2,
-  };
-  // A visually busy photo gets a slightly calmer layout to stay readable.
-  const busy = Math.min(1, analysis.edges.density / 0.14);
+function buildSpace(mood: Mood) {
+  // Airy subjects breathe; packed ones compress. Section rhythm moves further
+  // than the base unit so the difference reads at page scale.
   return {
-    unit: round(byGeometry[geometry] * lerp(0.98, 1.08, busy), 3),
-    rhythm: round(lerp(0.9, 1.25, byGeometry[geometry] - 0.86), 3),
+    unit: round(lerp(1.22, 0.86, mood.density), 3),
+    rhythm: round(lerp(1.5, 0.8, mood.density), 3),
+  };
+}
+
+export function buildLayout(archetype: LayoutArchetype, mood: Mood): LayoutTokens {
+  const spec = ARCHETYPE_BY_ID.get(archetype) ?? ARCHETYPES[0];
+  return {
+    archetype,
+    sections: { ...spec.sections },
+    heroAlign: spec.heroAlign,
+    // A packed photograph gets a narrower column, so the page stays readable
+    // against a more active background.
+    measure: Math.round(lerp(72, 58, mood.density)),
+    featureColumns: spec.featureColumns,
+    imageRatio: spec.imageRatio,
   };
 }
 
@@ -507,87 +650,44 @@ export function classifyPattern(analysis: ImageAnalysis, geometry: Geometry): Pa
 }
 
 // ---------------------------------------------------------------------------
-// Composition
-// ---------------------------------------------------------------------------
-
-const LAYOUT_BY_GEOMETRY: Record<Geometry, LayoutArchetype> = {
-  sharp: 'brutalist',
-  faceted: 'technical',
-  balanced: 'technical',
-  organic: 'editorial',
-  round: 'soft',
-};
-
-/**
- * The heuristic composition. Geometry is the strongest available proxy for how
- * a subject is *built*, and how a subject is built is what a layout echoes — a
- * machined object wants a tight grid, a weathered organic one wants a column
- * with air around it.
- */
-export function buildLayout(geometry: Geometry, analysis: ImageAnalysis): LayoutTokens {
-  const archetype = LAYOUT_BY_GEOMETRY[geometry];
-  const busy = Math.min(1, analysis.edges.density / 0.14);
-
-  return {
-    archetype,
-    heroAlign: archetype === 'editorial' || archetype === 'soft' ? 'center' : 'left',
-    // A visually busy photograph gets a narrower column, so the page stays
-    // readable against a more active background.
-    measure: Math.round(lerp(72, 58, busy)),
-    featureColumns: archetype === 'editorial' ? 2 : 3,
-    imageRatio: archetype === 'gallery' ? '1 / 1' : '4 / 3',
-  };
-}
-
-// ---------------------------------------------------------------------------
 // Motion
 // ---------------------------------------------------------------------------
 
 /**
- * Motion is a material property, decided from the same measurements as finish.
- *
- * Scored rather than cascaded, so the thresholds are visible and tunable and no
- * single signal silently dominates. When nothing scores above the floor the
- * answer is `still` — a page that fidgets for no reason is worse than one that
- * holds still, so "nothing" has to be a reachable outcome rather than whatever
- * the last `else` branch happened to be.
+ * Where each motion character sits in mood space. Chosen by distance, like
+ * layouts and type, so a calm open frame drifts, a loud raw one glitches and
+ * a hushed one holds still — the first version scored every one of ten test
+ * photographs as `glitch`.
  */
-export function classifyMotion(analysis: ImageAnalysis): MotionCharacter {
-  const { specularity, roughness, granularity, dynamicRange, brightness } = analysis.texture;
-  const { orientationEntropy, orthogonality, density } = analysis.edges;
+const MOTION_PROTOTYPES: Array<{ character: MotionCharacter; mood: Partial<Mood> }> = [
+  { character: 'still', mood: { energy: 0.05, density: 0.4 } },
+  { character: 'drift', mood: { energy: 0.15, density: 0.2, polish: 0.8 } },
+  { character: 'shimmer', mood: { energy: 0.4, order: 0.3, polish: 0.9 } },
+  { character: 'bloom', mood: { energy: 0.5, warmth: 0.8, polish: 0.7 } },
+  { character: 'settle', mood: { energy: 0.6, order: 0.9, density: 0.85, polish: 0.3 } },
+  { character: 'glitch', mood: { energy: 0.9, density: 0.9, polish: 0.15 } },
+];
 
+/**
+ * Motion is a material property, decided from the same mood as everything else.
+ *
+ * When the frame is empty the answer is `still` — a page that fidgets for no
+ * reason is worse than one that holds still, so "nothing" has to be a
+ * reachable outcome rather than whatever the last `else` branch happened to be.
+ */
+export function classifyMotion(analysis: ImageAnalysis, mood: Mood = computeMood(analysis)): MotionCharacter {
+  const { dynamicRange, specularity } = analysis.texture;
   // Nothing was observed, so nothing is implied. Orientation entropy is at its
   // maximum for a blank frame — every angle bin is equally empty — which reads
-  // as "organic" to any score that trusts entropy alone. An empty frame is not
-  // organic; it is empty, and it gets stillness.
-  if (density < 0.012 || dynamicRange < 0.06) return 'still';
+  // as "organic" to any score that trusts entropy alone.
+  if (analysis.edges.density < 0.012 || dynamicRange < 0.06) return 'still';
 
-  const scores: Record<Exclude<MotionCharacter, 'still'>, number> = {
-    // Light travelling over a smooth, curved surface. Roughness vetoes it for
-    // the same reason it vetoes gloss: a coarse surface scatters instead.
-    shimmer: specularity * 0.6 + orientationEntropy * 0.3 - roughness * 0.7,
-    // Coarse and high-contrast. Granularity separates real grain from a merely
-    // busy frame, which would otherwise score here on dynamic range alone.
-    glitch: roughness * 0.5 + granularity * 0.35 + dynamicRange * 0.25 - specularity * 0.3,
-    // Soft, organic, uncrowded. High edge density means structure, not drift.
-    drift: orientationEntropy * 0.5 - Math.min(1, density / 0.12) * 0.35 - roughness * 0.25,
-    // Machined: energy concentrated on the axes.
-    settle: orthogonality * 0.6 + (1 - orientationEntropy) * 0.4 - 0.15,
-    // Bright and specular — light coming off or through the subject.
-    bloom: specularity * 0.5 + brightness * 0.4 - roughness * 0.4,
-    // Something genuinely repeats.
-    weave: analysis.periodicity.strength * 0.9 - 0.1,
-  };
+  // Something genuinely repeats: let the motif carry the movement.
+  if (analysis.periodicity.strength >= 0.5) return 'weave';
+  // Real specular highlights on a smooth surface: light travelling across it.
+  if (specularity > 0.5 && mood.polish > 0.6) return 'shimmer';
 
-  let best: MotionCharacter = 'still';
-  let bestScore = 0.34; // floor: below this, nothing has earned the right to move
-  for (const [character, score] of Object.entries(scores)) {
-    if (score > bestScore) {
-      bestScore = score;
-      best = character as MotionCharacter;
-    }
-  }
-  return best;
+  return nearest(mood, MOTION_PROTOTYPES).character;
 }
 
 /** Per-character defaults. Period is in ms; amplitude is scaled below. */
@@ -629,7 +729,7 @@ function buildMotion(analysis: ImageAnalysis, character: MotionCharacter): Motio
 }
 
 // ---------------------------------------------------------------------------
-// Gradient mesh
+// Gradient mesh & texture
 // ---------------------------------------------------------------------------
 
 function buildMesh(palette: Palette, analysis: ImageAnalysis, sourceIsDark: boolean): MeshStop[] {
@@ -650,51 +750,56 @@ function buildMesh(palette: Palette, analysis: ImageAnalysis, sourceIsDark: bool
   });
 }
 
+/**
+ * How much of the photograph's own surface shows through. Raw, packed subjects
+ * wear their texture openly; polished, airy ones keep it to a trace.
+ */
+function buildTexture(mood: Mood, sourceIsDark: boolean): DesignTokens['texture'] {
+  return {
+    tileOpacity: round(lerp(0.04, 0.3, (1 - mood.polish) * 0.6 + mood.density * 0.4), 3),
+    blend: sourceIsDark ? 'soft-light' : 'multiply',
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
-function describe(geometry: Geometry, finish: Finish, voice: TypeVoice, pattern: PatternKind): string {
-  const geometryWord: Record<Geometry, string> = {
-    sharp: 'hard-edged',
-    faceted: 'angular',
-    balanced: 'evenly proportioned',
-    organic: 'organic',
-    round: 'soft and round',
-  };
-  const finishWord: Record<Finish, string> = {
-    glossy: 'glossy, light-catching',
-    metallic: 'brushed metallic',
-    matte: 'matte',
-    rough: 'coarse, tactile',
-    soft: 'smooth and diffuse',
-  };
-  const voiceWord: Record<TypeVoice, string> = {
-    technical: 'tight technical type',
-    neutral: 'clean neutral type',
-    editorial: 'editorial serif type',
-    friendly: 'rounded, friendly type',
-  };
-  const patternPhrase = pattern === 'none' ? 'no repeating motif' : `a ${pattern} motif`;
-  // "A organic subject" is the kind of seam that makes generated copy read as
-  // generated. Every adjective in the tables above is vowel-unambiguous.
-  const article = /^[aeiou]/i.test(geometryWord[geometry]) ? 'An' : 'A';
-  return `${article} ${geometryWord[geometry]}, ${finishWord[finish]} subject — rendered with ${voiceWord[voice]} and ${patternPhrase}.`;
+/** Describe a mood in words — the inspector's one-line summary. */
+export function describeMood(mood: Mood): string {
+  const pick = (v: number, low: string, mid: string, high: string) =>
+    v < 0.35 ? low : v > 0.65 ? high : mid;
+  const words = [
+    pick(mood.energy, 'calm', 'lively', 'loud'),
+    pick(mood.warmth, 'cool', 'neutral', 'warm'),
+    pick(mood.order, 'organic', 'balanced', 'structured'),
+    pick(mood.density, 'airy', 'measured', 'packed'),
+    pick(mood.polish, 'raw', 'textured', 'refined'),
+  ];
+  return words.join(', ');
+}
+
+function describe(mood: Mood, archetype: LayoutArchetype, typography: TypographyTokens, strategy: ColourStrategy): string {
+  const summary = describeMood(mood);
+  // "A airy subject" is the kind of seam that makes generated copy read as generated.
+  const article = /^[aeiou]/i.test(summary) ? 'An' : 'A';
+  return `${article} ${summary} subject — a ${archetype} page set in ${typography.label}, with a ${strategy} palette.`;
 }
 
 export function synthesize(analysis: ImageAnalysis): DesignTokens {
-  const palette = buildPalette(analysis);
-  const sourceIsDark = analysis.texture.brightness < 0.46;
+  const mood = computeMood(analysis);
+  const strategy = chooseStrategy(analysis, mood);
+  const sourceIsDark = chooseScheme(analysis, strategy);
+  const palette = buildPalette(analysis, mood, strategy, sourceIsDark);
 
-  const geometryScore = angularity(analysis);
-  const geometry = classifyGeometry(geometryScore);
+  const geometry = classifyGeometry(angularity(analysis));
+  const archetype = chooseArchetype(mood);
 
-  const paletteSaturation =
-    (hexToHsl(palette.primary).s + hexToHsl(palette.accent).s) / 2;
-  const finish = classifyFinish(analysis, paletteSaturation);
+  const paletteSaturation = (hexToHsl(palette.primary).s + hexToHsl(palette.accent).s) / 2;
+  const finish = classifyFinish(analysis, paletteSaturation, mood);
 
-  const voice = classifyVoice(geometry, analysis);
-  const unit = RADIUS_UNIT[geometry];
+  // A little more roundness for organic subjects, a little less for structured.
+  const unit = Math.round(RADIUS_BY_ARCHETYPE[archetype] * lerp(1.25, 0.75, mood.order));
 
   const patternKind = classifyPattern(analysis, geometry);
   // The analysis buffer is 256px on its *long* edge; scale the detected pitch
@@ -705,7 +810,8 @@ export function synthesize(analysis: ImageAnalysis): DesignTokens {
     Math.min(96, Math.max(8, analysis.periodicity.period * (longEdge / 256) * 2.2)),
   );
 
-  const surface = buildSurface(analysis, palette, finish, sourceIsDark);
+  const surface = buildSurface(analysis, palette, finish, sourceIsDark, mood);
+  const typography = buildTypography(choosePairing(mood, archetype), mood);
 
   const pattern = {
     kind: patternKind,
@@ -735,6 +841,7 @@ export function synthesize(analysis: ImageAnalysis): DesignTokens {
   );
 
   return {
+    mood,
     palette,
     radius: {
       unit,
@@ -743,16 +850,18 @@ export function synthesize(analysis: ImageAnalysis): DesignTokens {
       lg: `${round(unit * 1.4, 1)}px`,
       xl: `${round(unit * 2.2, 1)}px`,
     },
-    typography: buildTypography(voice, analysis),
-    space: buildSpace(geometry, analysis),
+    typography,
+    space: buildSpace(mood),
     surface,
+    texture: buildTexture(mood, sourceIsDark),
     pattern,
     mesh: buildMesh(palette, analysis, sourceIsDark),
-    motion: buildMotion(analysis, classifyMotion(analysis)),
-    layout: buildLayout(geometry, analysis),
+    motion: buildMotion(analysis, classifyMotion(analysis, mood)),
+    layout: buildLayout(archetype, mood),
+    copy: ARCHETYPE_COPY[archetype],
     meta: {
       geometry,
-      description: describe(geometry, finish, voice, patternKind),
+      description: describe(mood, archetype, typography, strategy),
       confidence,
       sourceIsDark,
     },
@@ -762,6 +871,7 @@ export function synthesize(analysis: ImageAnalysis): DesignTokens {
 /** Neutral theme shown before the first capture. */
 export function defaultTokens(): DesignTokens {
   const palette: Palette = {
+    strategy: 'accent',
     primary: '#5b6cff',
     secondary: '#8a6cff',
     accent: '#38d1c4',
@@ -771,25 +881,20 @@ export function defaultTokens(): DesignTokens {
     inkMuted: '#a9adc0',
     border: '#262a38',
     onPrimary: '#ffffff',
+    pops: [],
+    weights: DEFAULT_WEIGHTS.accent,
   };
 
   return {
+    mood: NEUTRAL_MOOD,
     palette,
-    radius: { unit: 14, sm: '5.6px', md: '11.2px', lg: '19.6px', xl: '30.8px' },
-    typography: {
-      voice: 'neutral',
-      headingFont: FONT_STACKS.neutral,
-      bodyFont: FONT_STACKS.neutral,
-      headingWeight: 650,
-      tracking: -0.025,
-      leading: 1.6,
-      scale: 1,
-    },
-    space: { unit: 1, rhythm: 1 },
+    radius: { unit: 12, sm: '4.8px', md: '9.6px', lg: '16.8px', xl: '26.4px' },
+    typography: buildTypography(DEFAULT_PAIRING),
+    space: { unit: 1.05, rhythm: 1.2 },
     surface: {
       finish: 'glossy',
       blur: 18,
-      grain: 0.03,
+      grain: 0.04,
       borderAlpha: 0.12,
       fillAlpha: 0.55,
       shadow: [
@@ -801,6 +906,7 @@ export function defaultTokens(): DesignTokens {
       sheen: 0.45,
       grainImage: buildGrain(0.8, 3),
     },
+    texture: { tileOpacity: 0, blend: 'soft-light' },
     pattern: {
       kind: 'none',
       period: 24,
@@ -821,13 +927,8 @@ export function defaultTokens(): DesignTokens {
       easing: MOTION_EASE.drift,
       trigger: 'scroll',
     },
-    layout: {
-      archetype: 'technical',
-      heroAlign: 'left',
-      measure: 68,
-      featureColumns: 3,
-      imageRatio: '4 / 3',
-    },
+    layout: buildLayout('serene', NEUTRAL_MOOD),
+    copy: RESTING_COPY,
     meta: {
       geometry: 'balanced',
       description: 'Waiting for a capture — this is the engine’s neutral resting state.',

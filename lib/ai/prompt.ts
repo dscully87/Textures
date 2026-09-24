@@ -77,7 +77,7 @@ export const SCHEMA_HINT = `{
     "tier": "ambient|accent|signature",
     "amplitude": 0.45,
     "period": 800,
-    "trigger": "none|scroll|view|hover",
+    "trigger": "none|scroll|view",
     "signatureRationale": null
   },
   "layout": {
@@ -146,7 +146,7 @@ ${swatches}
 
 THE DETERMINISTIC ENGINE PRODUCED
   primary ${heuristic.palette.primary}, accent ${heuristic.palette.accent}
-  geometry ${heuristic.meta.geometry}, finish ${heuristic.surface.finish}, voice ${heuristic.typography.voice}
+  geometry ${heuristic.meta.geometry}, finish ${heuristic.surface.finish}, type ${heuristic.typography.label}
   motif ${heuristic.pattern.kind}, motion ${heuristic.motion.character} (${heuristic.motion.tier})
   layout ${heuristic.layout.archetype}
   scheme ${heuristic.meta.sourceIsDark ? 'dark' : 'light'}

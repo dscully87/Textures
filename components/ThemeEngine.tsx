@@ -23,6 +23,8 @@ import {
 import { ANALYSIS_SIZE, ImageAnalysis, analyzeImage, extractPixels } from '@/lib/analyze';
 import { DesignTokens, applyTokens } from '@/lib/tokens';
 import { defaultTokens, synthesize } from '@/lib/synthesize';
+import { loadPairing } from '@/lib/fontLoader';
+import { Imagery, applyImagery, renderImagery, revokeImagery } from '@/lib/imagery';
 import { Refinement, RefinementStage, refineTheme } from '@/lib/ai/refine';
 
 export interface Capture {
@@ -76,6 +78,8 @@ interface EngineState {
   tokens: DesignTokens;
   analysis: ImageAnalysis | null;
   capture: Capture | null;
+  /** The capture rendered as page material: full photo, duotone and texture tile. */
+  imagery: Imagery | null;
   status: 'idle' | 'processing' | 'ready' | 'error';
   error: string | null;
   /** Feed an image element or video frame through the pipeline. */
@@ -126,10 +130,28 @@ function toPreview(
   return canvas.toDataURL('image/jpeg', 0.85);
 }
 
+/** Copy the current frame onto a canvas, so later async steps all see the same pixels. */
+function freeze(
+  source: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement,
+  width: number,
+  height: number,
+): HTMLCanvasElement {
+  if (source instanceof HTMLCanvasElement) return source;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  canvas.getContext('2d')?.drawImage(source, 0, 0, width, height);
+  return canvas;
+}
+
 export function ThemeEngine({ children }: { children: React.ReactNode }) {
   const [tokens, setTokens] = useState<DesignTokens>(() => defaultTokens());
   const [analysis, setAnalysis] = useState<ImageAnalysis | null>(null);
   const [capture, setCapture] = useState<Capture | null>(null);
+  const [imagery, setImagery] = useState<Imagery | null>(null);
+  const imageryRef = useRef<Imagery | null>(null);
+  /** Incremented per capture, so async work from a superseded capture can tell. */
+  const captureSeq = useRef(0);
   const [status, setStatus] = useState<EngineState['status']>('idle');
   const [error, setError] = useState<string | null>(null);
   const objectUrls = useRef<string[]>([]);
@@ -167,6 +189,39 @@ export function ThemeEngine({ children }: { children: React.ReactNode }) {
   useEffect(
     () => () => {
       objectUrls.current.forEach((url) => URL.revokeObjectURL(url));
+      revokeImagery(imageryRef.current);
+    },
+    [],
+  );
+
+  /**
+   * Render the capture into page material and swap it in, releasing the last
+   * set of object URLs. The duotone is printed in the palette's colours, so a
+   * refinement that changes the palette re-runs this.
+   */
+  const paintImagery = useCallback(
+    async (
+      source: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement,
+      width: number,
+      height: number,
+      palette: DesignTokens['palette'],
+      isCurrent: () => boolean,
+    ) => {
+      try {
+        const next = await renderImagery(source, width, height, palette);
+        // A newer capture finished first; its imagery is on screen.
+        if (!isCurrent()) {
+          revokeImagery(next);
+          return;
+        }
+        revokeImagery(imageryRef.current);
+        imageryRef.current = next;
+        applyImagery(next);
+        setImagery(next);
+      } catch (err) {
+        // Imagery is decoration; the theme is complete without it.
+        console.warn('[textures] could not render imagery:', err);
+      }
     },
     [],
   );
@@ -175,6 +230,8 @@ export function ThemeEngine({ children }: { children: React.ReactNode }) {
     async (source: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement) => {
       setStatus('processing');
       setError(null);
+      const seq = ++captureSeq.current;
+      const isCurrent = () => seq === captureSeq.current;
 
       // Yield a frame so the "processing" state can actually paint before the
       // synchronous pixel work blocks the main thread.
@@ -185,16 +242,23 @@ export function ThemeEngine({ children }: { children: React.ReactNode }) {
         const { width, height } = sourceDimensions(source);
         if (!width || !height) throw new Error('The frame has no pixels yet — try again.');
 
-        const pixels = extractPixels(source, width, height, ANALYSIS_SIZE);
+        // A live video moves on while the async steps below run. Freeze the
+        // frame once, so analysis, preview and imagery all see the same pixels.
+        const frame = freeze(source, width, height);
+        const pixels = extractPixels(frame, width, height, ANALYSIS_SIZE);
         const nextAnalysis = analyzeImage(pixels);
         const nextTokens = synthesize(nextAnalysis);
         const elapsedMs = performance.now() - started;
+        const preview = toPreview(frame, width, height);
 
-        // Inject first, then update state. The page is already restyled by the
-        // time React schedules its render.
+        // Fetch the chosen faces before switching to them (capped, so a slow
+        // network never holds the capture), then inject before updating state:
+        // the page is already restyled by the time React schedules its render.
+        await loadPairing(nextTokens.typography);
+        if (!isCurrent()) return;
         applyTokens(nextTokens);
-
-        const preview = toPreview(source, width, height);
+        await paintImagery(frame, width, height, nextTokens.palette, isCurrent);
+        if (!isCurrent()) return;
 
         setTokens(nextTokens);
         setAnalysis(nextAnalysis);
@@ -222,22 +286,27 @@ export function ThemeEngine({ children }: { children: React.ReactNode }) {
           onStage: (stage) => {
             if (!run.signal.aborted) setRefineStage(stage);
           },
-        }).then((result) => {
+        }).then(async (result) => {
           // A newer capture started while this was in flight; its tokens are on
           // screen and this stale result must not overwrite them.
           if (run.signal.aborted || refineRun.current !== run) return;
           if (!result) return;
 
+          await loadPairing(result.tokens.typography);
+          if (run.signal.aborted || refineRun.current !== run) return;
           applyTokens(result.tokens);
           setTokens(result.tokens);
           setRefinement(result);
+          if (result.tokens.palette.primary !== nextTokens.palette.primary) {
+            void paintImagery(frame, width, height, result.tokens.palette, isCurrent);
+          }
         });
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Could not read that image.');
         setStatus('error');
       }
     },
-    [refineEnabled],
+    [refineEnabled, paintImagery],
   );
 
   const ingestFile = useCallback(
@@ -269,12 +338,17 @@ export function ThemeEngine({ children }: { children: React.ReactNode }) {
   );
 
   const reset = useCallback(() => {
+    captureSeq.current++;
     refineRun.current?.abort();
     const base = defaultTokens();
     applyTokens(base);
     setTokens(base);
     setAnalysis(null);
     setCapture(null);
+    revokeImagery(imageryRef.current);
+    imageryRef.current = null;
+    applyImagery(null);
+    setImagery(null);
     setStatus('idle');
     setError(null);
     setRefinement(null);
@@ -289,6 +363,7 @@ export function ThemeEngine({ children }: { children: React.ReactNode }) {
       tokens,
       analysis,
       capture,
+      imagery,
       status,
       error,
       ingest,
@@ -303,6 +378,7 @@ export function ThemeEngine({ children }: { children: React.ReactNode }) {
       tokens,
       analysis,
       capture,
+      imagery,
       status,
       error,
       ingest,

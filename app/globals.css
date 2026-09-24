@@ -255,63 +255,8 @@
     }
   }
 
-  .display {
-    font-size: calc(clamp(2.25rem, 6.5vw, 5rem) * var(--type-scale));
-  }
-
-  .lede {
-    font-size: calc(clamp(1.02rem, 1.6vw, 1.28rem) * var(--type-scale));
-    color: var(--color-ink-muted);
-  }
-
-  /* Section padding scales with the density token via --space-rhythm. */
-  .section {
-    padding-block: calc(4rem * var(--space-rhythm));
-  }
-
-  /*
-   * Composition.
-   *
-   * These read `--measure`, `--feature-cols` and `--image-ratio`, which is what
-   * lets the *shape* of the page respond to a capture and not just its colour.
-   * Without them two photographs can only ever produce the same product in
-   * different paint.
-   */
-  .measure {
-    max-width: var(--measure);
-  }
-
-  .features {
-    display: grid;
-    gap: calc(var(--spacing) * 5);
-    grid-template-columns: 1fr;
-  }
-
-  @media (min-width: 768px) {
-    .features {
-      grid-template-columns: repeat(var(--feature-cols), minmax(0, 1fr));
-    }
-  }
-
-  .capture-figure {
-    aspect-ratio: var(--image-ratio);
-    width: 100%;
-    object-fit: cover;
-  }
-
-  /* An editorial subject wants one column of prose, not a dashboard of cards. */
-  :root[data-layout='editorial'] .features {
-    gap: calc(var(--spacing) * 8);
-  }
-
-  :root[data-align='center'] .hero {
-    align-items: center;
-    text-align: center;
-  }
-
-  :root[data-align='center'] .hero .measure {
-    margin-inline: auto;
-  }
+  /* The generated site's own styles live in `site.css`; these rules style the
+     instrument around it (capture panel, inspector, header). */
 
   .btn {
     display: inline-flex;
@@ -426,7 +371,12 @@
     }
   }
 
-  :root[data-motion='shimmer'] .panel::before {
+  :root[data-motion='shimmer'] .site .reveal::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
     background: linear-gradient(
       105deg,
       transparent calc(var(--sheen-x) - 22%),
@@ -457,8 +407,8 @@
     }
   }
 
-  :root[data-motion='glitch'] .display,
-  :root[data-motion='glitch'] .panel h3 {
+  :root[data-motion='glitch'] .site .display,
+  :root[data-motion='glitch'] .site .reveal h3 {
     text-shadow:
       var(--glitch-x) 0 0 color-mix(in oklab, var(--color-accent) 65%, transparent),
       calc(var(--glitch-x) * -1) 0 0 color-mix(in oklab, var(--color-primary) 65%, transparent);
@@ -482,6 +432,12 @@
     animation-timeline: scroll();
   }
 
+  /* The image itself drifts against the scroll — a slow parallax. */
+  :root[data-motion='drift'] .site .hero-photo {
+    animation: drift-scroll linear both;
+    animation-timeline: view();
+  }
+
   /* --- settle: precise arrival. No overshoot, no bounce ------------------- */
   @keyframes settle {
     from {
@@ -494,7 +450,7 @@
     }
   }
 
-  :root[data-motion='settle'] .panel {
+  :root[data-motion='settle'] .site .reveal {
     animation: settle var(--motion-period) var(--motion-ease) both;
     animation-timeline: view();
     animation-range: entry 5% entry 85%;
@@ -512,7 +468,7 @@
     }
   }
 
-  :root[data-motion='bloom'] .panel {
+  :root[data-motion='bloom'] .site .reveal {
     animation: bloom var(--motion-period) var(--motion-ease) both;
     animation-timeline: view();
     animation-range: entry 5% entry 90%;
@@ -525,7 +481,7 @@
     }
   }
 
-  :root[data-motion='weave'] .patterned::after {
+  :root[data-motion='weave'] .site .patterned::after {
     animation: weave var(--motion-period) linear infinite;
   }
 
