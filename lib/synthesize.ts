@@ -697,10 +697,12 @@ export function synthesize(analysis: ImageAnalysis): DesignTokens {
   const unit = RADIUS_UNIT[geometry];
 
   const patternKind = classifyPattern(analysis, geometry);
-  // The analysis buffer is 256px on its long edge; scale the detected pitch
-  // into something legible as a CSS-space tile.
+  // The analysis buffer is 256px on its *long* edge; scale the detected pitch
+  // into something legible as a CSS-space tile. Scaling by width alone shrank
+  // every motif from a portrait photo.
+  const longEdge = Math.max(analysis.width, analysis.height);
   const period = Math.round(
-    Math.min(96, Math.max(8, analysis.periodicity.period * (analysis.width / 256) * 2.2)),
+    Math.min(96, Math.max(8, analysis.periodicity.period * (longEdge / 256) * 2.2)),
   );
 
   const surface = buildSurface(analysis, palette, finish, sourceIsDark);

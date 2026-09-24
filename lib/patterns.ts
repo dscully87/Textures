@@ -31,7 +31,11 @@ export interface PatternOptions {
   kind: PatternKind;
   /** Tile edge length in px. */
   period: number;
-  /** Rotation of the motif in degrees. */
+  /**
+   * Direction the motif *repeats along*, in degrees — the periodicity angle
+   * from `analyzePeriodicity`, snapped to 0/45/90/135. Vertical stripes repeat
+   * along x, so they arrive as 0 and their lines run at 90.
+   */
   angle: number;
   /** Stroke/fill color — usually the accent, already alpha-composited by CSS opacity. */
   color: string;
@@ -39,14 +43,40 @@ export interface PatternOptions {
   weight?: number;
 }
 
+/** A line segment inside one tile, in tile coordinates. */
+export type Segment = [x1: number, y1: number, x2: number, y2: number];
+
+/**
+ * Stripe lines for one seamless tile.
+ *
+ * Lines run perpendicular to the repeat direction. Diagonals are drawn natively
+ * rather than by rotating a horizontal tile: a rotated square tile no longer
+ * meets its neighbours, which shows up as a visible seam every period. Lines of
+ * slope ±1 spaced p/2 apart are periodic in both x and y with period p, so
+ * these tiles join exactly.
+ */
+export function stripeSegments(p: number, repeatAngle: number): Segment[] {
+  const a = ((Math.round(repeatAngle / 45) * 45) % 180 + 180) % 180;
+  const h = p / 2;
+  switch (a) {
+    case 0: // repeats along x → vertical lines
+      return [0, h, p].map((x) => [x, 0, x, p] as Segment);
+    case 90: // repeats along y → horizontal lines
+      return [0, h, p].map((y) => [0, y, p, y] as Segment);
+    case 45: // repeats along (1,1) → lines along (1,-1): x + y = c
+      return [0, h, p, p + h, 2 * p].map((c) => [c - p, p, c, 0] as Segment);
+    default: // 135: repeats along (-1,1) → lines along (1,1): x - y = c
+      return [-p, -h, 0, h, p].map((c) => [c, 0, c + p, p] as Segment);
+  }
+}
+
 function stripes(p: number, color: string, weight: number, angle: number): string {
   const w = Math.max(1, p * weight);
+  const d = stripeSegments(p, angle)
+    .map(([x1, y1, x2, y2]) => `M ${x1} ${y1} L ${x2} ${y2}`)
+    .join(' ');
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${p}" height="${p}">
-    <g transform="rotate(${angle} ${p / 2} ${p / 2})">
-      <rect x="${-p}" y="${-p}" width="${p * 3}" height="${p * 3}" fill="none"/>
-      <path d="M ${-p} 0 L ${p * 2} 0 M ${-p} ${p / 2} L ${p * 2} ${p / 2} M ${-p} ${p} L ${p * 2} ${p}"
-        stroke="${color}" stroke-width="${w}"/>
-    </g>
+    <path d="${d}" stroke="${color}" stroke-width="${w}"/>
   </svg>`;
 }
 
@@ -65,12 +95,15 @@ function dots(p: number, color: string, weight: number): string {
   </svg>`;
 }
 
-function chevron(p: number, color: string, weight: number, angle: number): string {
+/**
+ * A zigzag already reads as diagonal, so it is drawn unrotated — rotating the
+ * tile would break its edges the same way it breaks rotated stripes.
+ */
+function chevron(p: number, color: string, weight: number): string {
   const w = Math.max(1, p * weight);
   const h = p / 2;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${p}" height="${p}">
-    <g transform="rotate(${angle} ${p / 2} ${p / 2})" fill="none" stroke="${color}"
-       stroke-width="${w}" stroke-linecap="square">
+    <g fill="none" stroke="${color}" stroke-width="${w}" stroke-linecap="square">
       <path d="M 0 ${h} L ${h} 0 L ${p} ${h}"/>
       <path d="M 0 ${p} L ${h} ${h} L ${p} ${p}"/>
     </g>
@@ -119,7 +152,7 @@ export function buildPattern(options: PatternOptions): string {
     case 'dots':
       return svgToDataUri(dots(period, color, weight));
     case 'chevron':
-      return svgToDataUri(chevron(period, color, weight, angle));
+      return svgToDataUri(chevron(period, color, weight));
     case 'weave':
       return svgToDataUri(weave(period, color, weight));
     case 'scatter':

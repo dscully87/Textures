@@ -407,6 +407,14 @@
  * is no fallback code to maintain, and stillness is already a first-class
  * outcome of the engine (`character: 'still'`), not a degraded state.
  */
+/*
+ * The whole layer sits behind `prefers-reduced-motion: no-preference`. The
+ * blanket reduced-motion rule in the base layer shortens `animation-duration`,
+ * which scroll-driven animations ignore — their progress comes from the scroll
+ * position, not the clock — so without this gate drift, shimmer, settle and
+ * bloom kept running for people who asked for no motion.
+ */
+@media (prefers-reduced-motion: no-preference) {
 @supports (animation-timeline: view()) {
   /* --- shimmer: light travelling across a smooth, curved surface ---------- */
   @keyframes shimmer {
@@ -422,7 +430,7 @@
     background: linear-gradient(
       105deg,
       transparent calc(var(--sheen-x) - 22%),
-      rgb(255 255 255 / calc(var(--sheen) * var(--motion-amplitude) * 0.55)) var(--sheen-x),
+      rgb(255 255 255 / calc(var(--sheen) * var(--motion-amplitude) * var(--motion-boost, 1) * 0.55)) var(--sheen-x),
       transparent calc(var(--sheen-x) + 22%)
     );
     animation: shimmer var(--motion-period) var(--motion-ease) both;
@@ -433,15 +441,15 @@
   /* --- glitch: chromatic split on entry. One-shot, never looping ---------- */
   @keyframes glitch {
     0% {
-      --glitch-x: calc(var(--motion-amplitude) * -7px);
+      --glitch-x: calc(var(--motion-amplitude) * var(--motion-boost, 1) * -7px);
       opacity: 0.55;
     }
     45% {
-      --glitch-x: calc(var(--motion-amplitude) * 5px);
+      --glitch-x: calc(var(--motion-amplitude) * var(--motion-boost, 1) * 5px);
       opacity: 1;
     }
     75% {
-      --glitch-x: calc(var(--motion-amplitude) * -2px);
+      --glitch-x: calc(var(--motion-amplitude) * var(--motion-boost, 1) * -2px);
     }
     100% {
       --glitch-x: 0px;
@@ -462,10 +470,10 @@
   /* --- drift: parallax on the background, linked to the page scroll ------- */
   @keyframes drift-scroll {
     from {
-      transform: translate3d(0, calc(var(--motion-amplitude) * -7%), 0) scale(1.06);
+      transform: translate3d(0, calc(var(--motion-amplitude) * var(--motion-boost, 1) * -7%), 0) scale(1.06);
     }
     to {
-      transform: translate3d(0, calc(var(--motion-amplitude) * 7%), 0) scale(1.06);
+      transform: translate3d(0, calc(var(--motion-amplitude) * var(--motion-boost, 1) * 7%), 0) scale(1.06);
     }
   }
 
@@ -478,7 +486,7 @@
   @keyframes settle {
     from {
       opacity: 0;
-      transform: translateY(calc(var(--motion-amplitude) * 20px));
+      transform: translateY(calc(var(--motion-amplitude) * var(--motion-boost, 1) * 20px));
     }
     to {
       opacity: 1;
@@ -496,7 +504,7 @@
   @keyframes bloom {
     from {
       opacity: 0;
-      filter: brightness(1.45) blur(calc(var(--motion-amplitude) * 7px));
+      filter: brightness(1.45) blur(calc(var(--motion-amplitude) * var(--motion-boost, 1) * 7px));
     }
     to {
       opacity: 1;
@@ -527,8 +535,9 @@
    * narrow so that cap is enforced by the markup as well as by the clamp.
    */
   :root[data-motion-tier='signature'] .hero-signature {
-    --motion-amplitude: calc(var(--motion-amplitude) * 2.1);
+    --motion-boost: 2.1;
   }
+}
 }
 
 /*

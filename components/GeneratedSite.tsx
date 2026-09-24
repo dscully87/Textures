@@ -152,16 +152,15 @@ export function GeneratedSite() {
             <div className="panel morph flex flex-col gap-4 p-6">
               <h3 className="font-heading text-xl">Palette in use</h3>
               <div className="flex gap-2">
-                {[palette.primary, palette.accent, palette.secondary, palette.surfaceAlt].map(
-                  (color) => (
-                    <div
-                      key={color}
-                      className="swatch morph h-16 flex-1"
-                      style={{ backgroundColor: color }}
-                      title={color}
-                    />
-                  ),
-                )}
+                {/* Keyed by role: two roles can resolve to the same hex. */}
+                {(['primary', 'accent', 'secondary', 'surfaceAlt'] as const).map((role) => (
+                  <div
+                    key={role}
+                    className="swatch morph h-16 flex-1"
+                    style={{ backgroundColor: palette[role] }}
+                    title={`${role} ${palette[role]}`}
+                  />
+                ))}
               </div>
               <p className="text-sm text-ink-muted">
                 Text colors are lightness-corrected against the generated surface until they clear
