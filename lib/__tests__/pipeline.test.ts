@@ -3,7 +3,7 @@ import { contrastHex, ensureContrast, hexToHsl, hslToHex, rgbToHex } from '../co
 import { colorfulness, quantize } from '../quantize';
 import { ImageAnalysis, analyzeEdges, analyzeImage, analyzePeriodicity, toGrayscale } from '../analyze';
 import { angularity, classifyFinish, classifyPattern, synthesize } from '../synthesize';
-import { buildGrain, buildPattern, svgToDataUri } from '../patterns';
+import { buildGrain, buildPattern, stripeSegments, svgToDataUri } from '../patterns';
 import { applyTokens, meshToCss } from '../tokens';
 
 // ---------------------------------------------------------------------------
@@ -277,6 +277,28 @@ describe('patterns', () => {
 
   it('keeps the grain filter reference intact through encoding', () => {
     expect(buildGrain(0.8, 3)).toContain('url(%23n)');
+  });
+
+  it('draws stripes perpendicular to the direction they repeat along', () => {
+    // The striped fixture repeats along x (periodicity angle 0): its lines are
+    // vertical, and the motif has to be too.
+    expect(analyzePeriodicity(toGrayscale(striped), 128, 128).angle).toBe(0);
+    for (const [x1, , x2] of stripeSegments(24, 0)) expect(x1).toBe(x2);
+    for (const [, y1, , y2] of stripeSegments(24, 90)) expect(y1).toBe(y2);
+  });
+
+  it('tiles diagonal stripes without a seam', () => {
+    // A tile joins its neighbour when every line leaving one edge re-enters at
+    // the opposite edge — i.e. the set of crossings on x=0 equals that on x=p.
+    const p = 24;
+    for (const angle of [45, 135]) {
+      const crossings = (x: number) =>
+        stripeSegments(p, angle)
+          .map(([x1, y1, x2, y2]) => y1 + ((x - x1) * (y2 - y1)) / (x2 - x1))
+          .filter((y) => y >= 0 && y <= p)
+          .sort((a, b) => a - b);
+      expect(crossings(0)).toEqual(crossings(p));
+    }
   });
 });
 

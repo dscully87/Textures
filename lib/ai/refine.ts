@@ -3,23 +3,26 @@
 /**
  * The refinement pass, orchestrated client-side.
  *
- * Classify on device → reason over the labels and measurements → validate →
- * patch. Every step is allowed to fail, and failure at any step means the
- * deterministic theme stands. Callers get `null` and carry on; nothing here
+ * Downscale the frozen frame → send it with the measurements → validate the
+ * reading → patch. Every step is allowed to fail, and failure at any step means
+ * the deterministic theme stands. Callers get `null` and carry on; nothing here
  * throws into a capture.
+ *
+ * With refinement on, a 512px JPEG of the capture leaves the device for Google's
+ * Gemini API. That is the point — a model that can see the photograph can tell
+ * a lake from a graffiti wall in ways pixel statistics cannot — and it is why
+ * the toggle is off by default and says so in words.
  */
 
 import { ImageAnalysis, Pixels } from '../analyze';
 import { PatchResult, applyReading } from '../patch';
 import { DesignTokens } from '../tokens';
-import { classifyCapture } from '../vision/classify';
-import { Classification } from '../vision/labels';
 import { PerceptualCache, perceptualHash } from '../vision/phash';
-import { SYSTEM_PROMPT, buildUserPrompt } from './prompt';
+import { toMeasurements } from './prompt';
 import { SceneReading, parseReading } from './reading';
 
 export interface RefinementStage {
-  stage: 'classifying' | 'reading' | 'settled' | 'skipped';
+  stage: 'reading' | 'settled' | 'skipped';
   /** Machine-readable cause when `skipped`, e.g. `no-api-key`, `provider-404`. */
   reason?: string;
   /** The provider's own message on a configuration error, when there is one. */
@@ -28,22 +31,19 @@ export interface RefinementStage {
 
 export interface Refinement extends PatchResult {
   reading: SceneReading;
-  classification: Classification | null;
   cached: boolean;
   elapsedMs: number;
 }
 
-interface CachedReading {
-  reading: SceneReading;
-  classification: Classification | null;
-}
+/** Long edge of the image sent to the model. Enough to read a subject; small enough to be cheap. */
+export const UPLOAD_EDGE = 512;
 
 /**
  * Keyed on what the capture looks like, so repeat captures of one subject are
  * free *and* deterministic — the same object reliably yields the same site,
  * which is the property the heuristic engine gets for nothing.
  */
-const cache = new PerceptualCache<CachedReading>();
+const cache = new PerceptualCache<SceneReading>();
 
 interface ReadingResponse {
   reading: SceneReading | null;
@@ -51,9 +51,22 @@ interface ReadingResponse {
   detail?: string;
 }
 
+/** A base64 JPEG (no data-URL prefix) of the frame at upload size. */
+export function encodeForUpload(frame: CanvasImageSource, width: number, height: number): string {
+  const scale = Math.min(1, UPLOAD_EDGE / Math.max(width, height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas 2D context unavailable');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/jpeg', 0.82).replace(/^data:image\/jpeg;base64,/, '');
+}
+
 async function requestReading(
+  image: string,
   analysis: ImageAnalysis,
-  classification: Classification | null,
   heuristic: DesignTokens,
   signal: AbortSignal,
 ): Promise<ReadingResponse> {
@@ -61,11 +74,7 @@ async function requestReading(
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     signal,
-    body: JSON.stringify({
-      system: SYSTEM_PROMPT,
-      user: buildUserPrompt(analysis, classification, heuristic),
-      swatchCount: analysis.swatches.length,
-    }),
+    body: JSON.stringify({ image, measurements: toMeasurements(analysis, heuristic) }),
   });
 
   const payload = await response.json().catch(() => null);
@@ -88,9 +97,8 @@ async function requestReading(
 /**
  * Refine a deterministic theme.
  *
- * `pixels` is the analysis buffer, used only for the cache key — it is never
- * uploaded. `preview` is the data URL CLIP reads, and it never leaves the
- * browser either.
+ * `pixels` is the analysis buffer, used only for the cache key. `frame` is the
+ * frozen capture the upload is encoded from.
  *
  * Returns `null` whenever refinement is unavailable, which is a normal outcome
  * rather than an error: no key configured, model unreachable, response
@@ -100,7 +108,7 @@ export async function refineTheme(
   base: DesignTokens,
   analysis: ImageAnalysis,
   pixels: Pixels,
-  preview: string,
+  frame: { source: CanvasImageSource; width: number; height: number },
   options: { signal?: AbortSignal; onStage?: (stage: RefinementStage) => void } = {},
 ): Promise<Refinement | null> {
   const { signal, onStage } = options;
@@ -115,29 +123,21 @@ export async function refineTheme(
   const hit = cache.get(hash);
 
   try {
-    let reading: SceneReading | null;
-    let classification: Classification | null;
+    let reading: SceneReading;
 
     if (hit) {
-      ({ reading, classification } = hit);
+      reading = hit;
     } else {
-      onStage?.({ stage: 'classifying' });
-      classification = await classifyCapture(preview);
-      if (signal?.aborted) return null;
-
       onStage?.({ stage: 'reading' });
-      const response = await requestReading(
-        analysis,
-        classification,
-        base,
-        signal ?? new AbortController().signal,
-      );
+      const image = encodeForUpload(frame.source, frame.width, frame.height);
+      const response = await requestReading(image, analysis, base, signal ?? new AbortController().signal);
+      if (signal?.aborted) return null;
       if (!response.reading) {
         onStage?.({ stage: 'skipped', reason: response.reason, detail: response.detail });
         return null;
       }
       reading = response.reading;
-      cache.set(hash, { reading, classification });
+      cache.set(hash, reading);
     }
 
     const result = applyReading(base, reading, analysis);
@@ -146,7 +146,6 @@ export async function refineTheme(
     return {
       ...result,
       reading,
-      classification,
       cached: Boolean(hit),
       elapsedMs: Math.round(performance.now() - started),
     };

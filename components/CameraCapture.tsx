@@ -210,9 +210,9 @@ export function CameraCapture() {
           ref={fileInputRef}
           type="file"
           accept="image/*"
-          // `capture` asks a phone to open the camera app directly, which is the
-          // most reliable capture path on mobile Safari.
-          capture="environment"
+          // No `capture` attribute: it makes phones skip the photo library and
+          // open the camera, which turns "Upload" into a second camera button.
+          // Leaving it off lets the OS offer both the library and the camera.
           className="sr-only"
           onChange={(e) => {
             const file = e.target.files?.[0];

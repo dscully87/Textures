@@ -63,12 +63,51 @@ export interface PeriodicityReport {
   angle: number;
 }
 
+/**
+ * How colour is distributed, as opposed to which colours are present.
+ *
+ * Swatches say *what* the colours are; this says whether the frame is one
+ * colour family (a lake: blues) or many (a graffiti wall: every hue at once),
+ * and whether it leans warm or cool. Those two facts separate subjects that
+ * swatch ranking alone treats as "a primary plus an accent".
+ */
+export interface ColourReport {
+  /** Distinct hue families holding real coverage. 0 for a greyscale frame. */
+  hueCount: number;
+  /** Share of the frame that carries real chroma, 0..1. */
+  chromaticShare: number;
+  /** Mean HSV saturation of the chromatic pixels, 0..1. */
+  saturation: number;
+  /** Chroma-weighted warmth: 0 = cool blues, 1 = warm oranges, 0.5 = neutral. */
+  warmth: number;
+  /** Hue in degrees holding the most chromatic coverage. */
+  dominantHue: number;
+}
+
+/**
+ * Where things are in the frame, rather than what they are.
+ *
+ * A landscape is sky over horizon over water — calm bands with one line of
+ * detail. A graffiti wall is detail everywhere. That difference is what a
+ * layout should echo: negative space wants air; a packed frame wants density.
+ */
+export interface CompositionReport {
+  /** Share of the frame that is calm — low-gradient blocks, i.e. negative space. */
+  calm: number;
+  /** Share of luminance variance explained by row position (horizontal bands). */
+  banding: number;
+  /** Edge energy in the centre third relative to the whole frame; >1 = centred subject. */
+  centreWeight: number;
+}
+
 export interface ImageAnalysis {
   swatches: Swatch[];
   colorfulness: number;
   edges: EdgeReport;
   texture: TextureReport;
   periodicity: PeriodicityReport;
+  colour: ColourReport;
+  composition: CompositionReport;
   /** Dimensions of the downscaled buffer the metrics were computed on. */
   width: number;
   height: number;
@@ -178,7 +217,9 @@ export function analyzeEdges(gray: Float32Array, width: number, height: number):
 
   return {
     density: strongCount / magnitude.length,
-    strength: Math.min(1, mean / 0.35),
+    // Photographs span a mean magnitude of roughly 0.15 (a still lake) to 0.6 (a
+    // graffiti wall or a circuit board); dividing by 0.35 saturated half of them.
+    strength: Math.min(1, mean / 0.6),
     orthogonality: Math.min(1, orthogonality),
     orientationEntropy,
     dominantAngle: (peak + 0.5) * (180 / BINS),
@@ -205,7 +246,11 @@ export function analyzeTexture(
       lapCount++;
     }
   }
-  const roughness = lapCount ? Math.min(1, lapSum / lapCount / 0.12) : 0;
+  // Calibrated on photographs, where the mean |Laplacian| runs from ~0.03 (glossy
+  // sweets on white) to ~0.28 (a circuit board). The old divisor of 0.12 pinned
+  // six of ten test photographs at 1.0, which made roughness useless for telling
+  // them apart.
+  const roughness = lapCount ? Math.min(1, Math.max(0, lapSum / lapCount - 0.02) / 0.22) : 0;
 
   // Local variance over 4x4 tiles.
   let varSum = 0;
@@ -368,6 +413,155 @@ export function analyzePeriodicity(
   return { ...best, strength: Math.max(0, Math.min(1, best.strength)) };
 }
 
+const HUE_BINS = 12;
+
+export function analyzeColour({ data, width, height }: Pixels): ColourReport {
+  const bins = new Array<number>(HUE_BINS).fill(0);
+  let chromaMass = 0;
+  let chromatic = 0;
+  let satSum = 0;
+  let warmSum = 0;
+  const total = width * height;
+
+  for (let i = 0, p = 0; p < total; i += 4, p++) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const chroma = (max - min) / 255;
+    // Below this a pixel is grey for every practical purpose; very dark pixels
+    // carry sensor noise that looks like hue and is not.
+    if (chroma < 0.12 || max < 40) continue;
+
+    let h: number;
+    if (max === r) h = ((g - b) / (max - min)) % 6;
+    else if (max === g) h = (b - r) / (max - min) + 2;
+    else h = (r - g) / (max - min) + 4;
+    h = (h * 60 + 360) % 360;
+
+    chromatic++;
+    chromaMass += chroma;
+    satSum += (max - min) / max;
+    bins[Math.min(HUE_BINS - 1, Math.floor(h / (360 / HUE_BINS)))] += chroma;
+    // Warmest at orange (~35°), coolest at blue (~215°).
+    warmSum += chroma * Math.cos(((h - 35) * Math.PI) / 180);
+  }
+
+  const chromaticShare = total ? chromatic / total : 0;
+  if (chromaMass === 0) {
+    return { hueCount: 0, chromaticShare, saturation: 0, warmth: 0.5, dominantHue: 0 };
+  }
+
+  const shares = bins.map((v) => v / chromaMass);
+
+  // Hue families are runs of adjacent bins with real coverage. Orange spilling
+  // across two 30° bins is still one family; a run wider than 90° is a spread
+  // of genuinely different colours and counts once per 90°.
+  const significant = shares.map((s) => s >= 0.05);
+  let hueCount = 0;
+  if (significant.every(Boolean)) {
+    hueCount = HUE_BINS / 3;
+  } else {
+    const start = significant.findIndex((s) => !s);
+    let run = 0;
+    for (let k = 1; k <= HUE_BINS; k++) {
+      const on = significant[(start + k) % HUE_BINS];
+      if (on) run++;
+      if ((!on || k === HUE_BINS) && run > 0) {
+        hueCount += Math.ceil(run / 3);
+        run = 0;
+      }
+    }
+  }
+  // A frame that is barely coloured has at most one colour worth designing
+  // around, however its few chromatic pixels happen to be spread.
+  if (chromaticShare < 0.06) hueCount = Math.min(hueCount, 1);
+
+  let peak = 0;
+  for (let k = 1; k < HUE_BINS; k++) if (shares[k] > shares[peak]) peak = k;
+
+  // Pull warmth toward neutral when little of the frame is coloured at all.
+  const presence = Math.min(1, chromaticShare / 0.15);
+  return {
+    hueCount,
+    chromaticShare,
+    saturation: satSum / chromatic,
+    warmth: 0.5 + 0.5 * (warmSum / chromaMass) * presence,
+    dominantHue: (peak + 0.5) * (360 / HUE_BINS),
+  };
+}
+
+export function analyzeComposition(
+  gray: Float32Array,
+  width: number,
+  height: number,
+): CompositionReport {
+  const { magnitude } = sobel(gray, width, height);
+
+  // Negative space: 8×8 blocks whose mean gradient stays below a low floor.
+  const BLOCK = 8;
+  let calmBlocks = 0;
+  let blocks = 0;
+  for (let by = 0; by + BLOCK <= height; by += BLOCK) {
+    for (let bx = 0; bx + BLOCK <= width; bx += BLOCK) {
+      let s = 0;
+      for (let y = by; y < by + BLOCK; y++) {
+        for (let x = bx; x < bx + BLOCK; x++) s += magnitude[y * width + x];
+      }
+      if (s / (BLOCK * BLOCK) < CALM_GRADIENT) calmBlocks++;
+      blocks++;
+    }
+  }
+
+  // Banding: how much of the luminance variance is explained by the row alone.
+  // Sky over water over shore scores high; an all-over pattern scores near 0.
+  let mean = 0;
+  for (const v of gray) mean += v;
+  mean /= gray.length || 1;
+  let totalVar = 0;
+  let rowVar = 0;
+  for (let y = 0; y < height; y++) {
+    let rowMean = 0;
+    for (let x = 0; x < width; x++) {
+      const v = gray[y * width + x];
+      rowMean += v;
+      totalVar += (v - mean) ** 2;
+    }
+    rowMean /= width;
+    rowVar += width * (rowMean - mean) ** 2;
+  }
+
+  // Centre weight: edge energy inside the middle third against the frame mean.
+  let all = 0;
+  let centre = 0;
+  let centreCount = 0;
+  const x0 = Math.floor(width / 3);
+  const x1 = Math.ceil((2 * width) / 3);
+  const y0 = Math.floor(height / 3);
+  const y1 = Math.ceil((2 * height) / 3);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const m = magnitude[y * width + x];
+      all += m;
+      if (x >= x0 && x < x1 && y >= y0 && y < y1) {
+        centre += m;
+        centreCount++;
+      }
+    }
+  }
+  const allMean = all / (width * height || 1);
+
+  return {
+    calm: blocks ? calmBlocks / blocks : 1,
+    banding: totalVar > 0 ? rowVar / totalVar : 0,
+    centreWeight: allMean > 0 && centreCount ? centre / centreCount / allMean : 1,
+  };
+}
+
+/** Mean Sobel magnitude below which an 8×8 block reads as empty space. */
+const CALM_GRADIENT = 0.06;
+
 /** Run the full analysis over a downscaled RGBA buffer. */
 export function analyzeImage(pixels: Pixels): ImageAnalysis {
   const { width, height, data } = pixels;
@@ -379,6 +573,8 @@ export function analyzeImage(pixels: Pixels): ImageAnalysis {
     edges: analyzeEdges(gray, width, height),
     texture: analyzeTexture(pixels, gray, width, height),
     periodicity: analyzePeriodicity(gray, width, height),
+    colour: analyzeColour(pixels),
+    composition: analyzeComposition(gray, width, height),
     width,
     height,
   };
@@ -399,12 +595,35 @@ export function extractPixels(
   const width = Math.max(1, Math.round(sourceWidth * scale));
   const height = Math.max(1, Math.round(sourceHeight * scale));
 
+  // Halve in steps before the final draw. A single drawImage from a 4000px phone
+  // photo straight to 256px samples a few source pixels per output pixel and
+  // aliases fine detail into noise, which every texture metric then reads as
+  // roughness: the same scene measured louder and coarser the larger the
+  // camera. Each halving averages 2×2 blocks, so the final buffer approximates
+  // a true area average whatever the source resolution.
+  let current: CanvasImageSource = source;
+  let cw = sourceWidth;
+  let ch = sourceHeight;
+  while (cw / 2 >= width * 1.5 && ch / 2 >= height * 1.5) {
+    const half = document.createElement('canvas');
+    half.width = Math.round(cw / 2);
+    half.height = Math.round(ch / 2);
+    const hctx = half.getContext('2d');
+    if (!hctx) break;
+    hctx.imageSmoothingQuality = 'high';
+    hctx.drawImage(current, 0, 0, half.width, half.height);
+    current = half;
+    cw = half.width;
+    ch = half.height;
+  }
+
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) throw new Error('Canvas 2D context unavailable');
 
-  ctx.drawImage(source, 0, 0, width, height);
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(current, 0, 0, width, height);
   return { data: ctx.getImageData(0, 0, width, height).data, width, height };
 }

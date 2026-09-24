@@ -12,11 +12,18 @@ import { RGB, rgbToHsl, rgbToHex } from './color';
 export interface Swatch {
   rgb: RGB;
   hex: string;
-  /** Share of sampled pixels falling in this box, 0..1. */
+  /** Share of sampled pixels nearest to this colour, 0..1. */
   population: number;
+  /**
+   * HSL saturation. Unstable near black and white — HSL divides by a term that
+   * vanishes at both poles, so an off-white reads as 80–100% "saturated".
+   * Rank by `chroma` instead.
+   */
   saturation: number;
   lightness: number;
   hue: number;
+  /** Colourfulness as (max − min) / 255 — well-behaved at every lightness. */
+  chroma: number;
 }
 
 interface Box {
@@ -107,23 +114,81 @@ export function quantize(
     boxes = next;
   }
 
-  const total = pixels.length;
-  const swatches = boxes
-    .filter((b) => b.pixels.length > 0)
-    .map<Swatch>((box) => {
-      const rgb = averageOf(box.pixels);
-      const hsl = rgbToHsl(rgb);
-      return {
-        rgb,
-        hex: rgbToHex(rgb),
-        population: box.pixels.length / total,
-        saturation: hsl.s,
-        lightness: hsl.l,
-        hue: hsl.h,
+  // Median cut splits every box at its median, so each final box holds the
+  // same number of pixels — 1/8 each — whatever the photograph looks like.
+  // Taken as-is, "population" would be a constant. Reassigning pixels to their
+  // nearest box colour (two Lloyd iterations) recovers real coverage: a sky
+  // that fills half the frame reports half the frame.
+  let centroids = boxes.filter((b) => b.pixels.length > 0).map((b) => averageOf(b.pixels));
+  let counts = new Array<number>(centroids.length).fill(0);
+  for (let iteration = 0; iteration < 2; iteration++) {
+    const sums = centroids.map(() => ({ r: 0, g: 0, b: 0 }));
+    counts = new Array<number>(centroids.length).fill(0);
+    for (const p of pixels) {
+      const k = nearestIndex(centroids, p);
+      sums[k].r += p.r;
+      sums[k].g += p.g;
+      sums[k].b += p.b;
+      counts[k]++;
+    }
+    centroids = centroids.map((c, k) =>
+      counts[k] ? { r: sums[k].r / counts[k], g: sums[k].g / counts[k], b: sums[k].b / counts[k] } : c,
+    );
+  }
+
+  // Merge colours a viewer could not tell apart; a white background otherwise
+  // occupies three of eight slots and crowds out the subject.
+  const merged: Array<{ rgb: RGB; count: number }> = [];
+  centroids.forEach((rgb, k) => {
+    if (!counts[k]) return;
+    const twin = merged.find((m) => rgbDistance(m.rgb, rgb) < MERGE_DISTANCE);
+    if (twin) {
+      const n = twin.count + counts[k];
+      twin.rgb = {
+        r: (twin.rgb.r * twin.count + rgb.r * counts[k]) / n,
+        g: (twin.rgb.g * twin.count + rgb.g * counts[k]) / n,
+        b: (twin.rgb.b * twin.count + rgb.b * counts[k]) / n,
       };
-    });
+      twin.count = n;
+    } else {
+      merged.push({ rgb, count: counts[k] });
+    }
+  });
+
+  const total = pixels.length;
+  const swatches = merged.map<Swatch>(({ rgb, count: n }) => {
+    const hsl = rgbToHsl(rgb);
+    return {
+      rgb,
+      hex: rgbToHex(rgb),
+      population: n / total,
+      saturation: Math.min(1, hsl.s),
+      lightness: hsl.l,
+      hue: hsl.h,
+      chroma: (Math.max(rgb.r, rgb.g, rgb.b) - Math.min(rgb.r, rgb.g, rgb.b)) / 255,
+    };
+  });
 
   return swatches.sort((a, b) => b.population - a.population).slice(0, count);
+}
+
+/** Euclidean RGB distance below which two swatches are the same colour to the eye. */
+const MERGE_DISTANCE = 18;
+
+const rgbDistance = (a: RGB, b: RGB) => Math.hypot(a.r - b.r, a.g - b.g, a.b - b.b);
+
+function nearestIndex(centroids: RGB[], p: RGB): number {
+  let best = 0;
+  let bestD = Infinity;
+  for (let k = 0; k < centroids.length; k++) {
+    const c = centroids[k];
+    const d = (c.r - p.r) ** 2 + (c.g - p.g) ** 2 + (c.b - p.b) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = k;
+    }
+  }
+  return best;
 }
 
 /**

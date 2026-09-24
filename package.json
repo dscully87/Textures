@@ -12,7 +12,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@huggingface/transformers": "^4.2.0",
+    "@google/genai": "^2.24.0",
+    "fflate": "^0.8.3",
     "next": "^16.3.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
@@ -24,6 +25,7 @@
     "@types/react-dom": "^19.2.0",
     "eslint": "^9.28.0",
     "eslint-config-next": "^16.3.0",
+    "jpeg-js": "^0.4.4",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.8.3",
     "vitest": "^3.2.0"

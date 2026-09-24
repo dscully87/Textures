@@ -1,0 +1,1199 @@
+/*
+ * The generated site.
+ *
+ * Every rule reads design tokens (CSS variables written by `applyTokens`) and
+ * branches on `data-layout`, so the same components render as a still-water
+ * landing page, a magazine spread, a spec sheet, a concrete slab or a poster
+ * wall. The site sits in a column of variable width, so sizes answer to the
+ * container (`cqi`, `@container`) rather than the viewport.
+ *
+ * Wrappers use `overflow: clip`, never `hidden`: an `overflow: hidden` element
+ * is a scroll container, and scroll-driven animations (`view()`) attach to the
+ * nearest one. Bound to a box that never scrolls, every block counts as already
+ * in view, so it sits at its final keyframe and the reveal silently never plays
+ * (checked in Chromium: an off-screen block reads opacity 1 under `hidden`,
+ * 0 under `clip`).
+ */
+
+.site {
+  container-type: inline-size;
+  position: relative;
+  isolation: isolate;
+  overflow: clip;
+  background-color: var(--color-surface);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  font-weight: var(--weight-body);
+  line-height: var(--leading-body);
+  --gutter: clamp(1.25rem, 5cqi, 4rem);
+  --rule: 1px solid var(--color-line);
+}
+
+.site :is(h1, h2, h3) {
+  font-family: var(--font-heading);
+  font-weight: var(--weight-heading);
+  letter-spacing: var(--tracking-heading);
+  text-transform: var(--heading-case);
+  line-height: 1.02;
+  text-wrap: balance;
+}
+
+.site ul,
+.site ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.site .display {
+  font-size: calc(clamp(2.3rem, 7.4cqi, 5.8rem) * var(--type-scale));
+}
+
+/* The emphasised tail of a headline: the accent colour (3:1 on the surface, the
+   large-text floor) and, for serif pairings, the italic register. */
+.site .headline-accent {
+  font-style: var(--heading-style);
+  color: var(--color-accent);
+}
+
+.site .lede {
+  font-size: calc(clamp(1rem, 2cqi, 1.22rem) * var(--type-scale));
+  color: var(--color-ink-muted);
+}
+
+.site .eyebrow {
+  font-family: var(--font-accent);
+  font-size: 0.78rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+}
+
+.site .measure {
+  max-width: var(--measure);
+}
+
+.site .section {
+  position: relative;
+  isolation: isolate;
+  padding: calc(4.5rem * var(--space-rhythm)) var(--gutter);
+}
+
+.site .tinted {
+  background-color: var(--color-surface-alt);
+}
+
+.site .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--spacing) * 3);
+}
+
+.site .btn {
+  font-family: var(--font-body);
+}
+
+.site .btn-small {
+  padding: 0.45rem 0.95rem;
+  font-size: 0.8rem;
+}
+
+.site .btn-inverse {
+  background-color: var(--color-on-primary);
+  color: var(--color-primary);
+}
+
+.site .caption {
+  margin-top: 0.6rem;
+  font-family: var(--font-accent);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  color: var(--color-ink-muted);
+}
+
+.photo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Where a frame sets its own aspect ratio, height must follow it. Left at 100%
+   inside a stretched grid item, the image takes the item's full height and
+   pushes everything after it — a card's title and text — out of the box. */
+.hero-split .hero-photo,
+.stack-media .hero-photo,
+.card-photo {
+  height: auto;
+}
+
+/* Before a capture there is no photograph; the mesh stands in for it. */
+.photo-fallback {
+  background-color: var(--color-surface-alt);
+  background-image: var(--mesh-image);
+  background-size: 180% 180%;
+}
+
+/* Texture cut from the photograph itself, mirror-tiled, under a blend mode so
+   it takes the palette's colour rather than its own. */
+.site .textured {
+  position: relative;
+  isolation: isolate;
+}
+
+.site .textured::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: var(--photo-tile, none);
+  background-size: 320px 320px;
+  opacity: var(--texture-opacity);
+  mix-blend-mode: var(--texture-blend);
+}
+
+/* Blocks that animate in (settle, bloom, shimmer) — see the motion layer. */
+.site .reveal {
+  position: relative;
+}
+
+/* The procedural motif, where the photograph has a repeat. */
+.site .patterned::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: var(--pattern-image);
+  background-size: var(--pattern-size) var(--pattern-size);
+  opacity: var(--pattern-opacity);
+}
+
+/* ------------------------------------------------------------------ Chrome */
+
+.site-nav {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 1.1rem var(--gutter);
+  border-bottom: var(--rule);
+}
+
+.site-nav .brand,
+.site-footer .brand {
+  font-family: var(--font-heading);
+  font-weight: var(--weight-heading);
+  letter-spacing: var(--tracking-heading);
+  text-transform: var(--heading-case);
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+.site-nav ul {
+  display: none;
+  gap: 1.5rem;
+  margin-left: auto;
+  font-size: 0.86rem;
+  color: var(--color-ink-muted);
+}
+
+.site-nav .btn {
+  margin-left: auto;
+}
+
+.site-nav ul + .btn {
+  margin-left: 0;
+}
+
+@container (min-width: 640px) {
+  .site-nav ul {
+    display: flex;
+  }
+}
+
+.site-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.75rem 1.5rem;
+  padding: 2rem var(--gutter);
+  border-top: var(--rule);
+}
+
+.footer-note {
+  font-size: 0.85rem;
+  color: var(--color-ink-muted);
+}
+
+.site-footer ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.9rem;
+  margin-left: auto;
+  font-family: var(--font-accent);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+}
+
+/* ------------------------------------------------------------------- Heroes */
+
+.hero {
+  position: relative;
+  isolation: isolate;
+}
+
+.hero-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--spacing) * 5);
+}
+
+/* bleed — the photograph takes the stage; copy rises out of a scrim. */
+.hero-bleed .hero-media {
+  position: relative;
+  height: clamp(18rem, 56cqi, 34rem);
+  overflow: clip;
+}
+
+.hero-bleed .hero-scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    transparent 25%,
+    color-mix(in oklab, var(--color-surface) 80%, transparent) 72%,
+    var(--color-surface) 100%
+  );
+}
+
+.hero-bleed .hero-copy {
+  align-items: center;
+  margin-top: clamp(-5rem, -8cqi, -2.5rem);
+  padding: 0 var(--gutter) calc(4.5rem * var(--space-rhythm));
+  text-align: center;
+}
+
+/* split — a magazine spread. */
+.hero-split {
+  display: grid;
+  gap: 2.5rem;
+  align-items: center;
+  padding: calc(4.5rem * var(--space-rhythm)) var(--gutter);
+}
+
+@container (min-width: 720px) {
+  .hero-split {
+    grid-template-columns: 1.15fr 0.85fr;
+  }
+}
+
+.hero-split .hero-photo {
+  aspect-ratio: var(--image-ratio);
+  border-radius: var(--radius-lg);
+}
+
+.eyebrow-rule {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.eyebrow-rule::before {
+  content: '';
+  width: 2.5rem;
+  height: 1px;
+  background: currentColor;
+}
+
+/* poster — a paste-up wall. Every line of the headline is a cut-out on a solid
+   block, so it reads whatever the duotone behind it is doing. */
+.hero-poster {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 1.1rem;
+  min-height: clamp(28rem, 78cqi, 44rem);
+  padding: calc(4rem * var(--space-rhythm)) var(--gutter) calc(3.5rem * var(--space-rhythm));
+  overflow: clip;
+}
+
+.poster-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+}
+
+.poster-backdrop .photo {
+  filter: contrast(1.2) saturate(1.1);
+}
+
+.poster-backdrop::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(transparent 45%, color-mix(in oklab, var(--color-surface) 75%, transparent));
+}
+
+.poster-lines {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.1em 0.16em;
+  max-width: 11ch;
+  font-size: calc(clamp(3rem, 12.5cqi, 8.5rem) * var(--type-scale));
+  line-height: 0.92;
+}
+
+.poster-line {
+  display: inline-block;
+  padding: 0.04em 0.14em 0.06em;
+  background: var(--color-ink);
+  color: var(--color-surface);
+  box-shadow: 0.06em 0.06em 0 var(--pop-1);
+  rotate: -1.2deg;
+}
+
+.poster-line-1 {
+  background: var(--pop-1);
+  color: var(--on-pop-1);
+  box-shadow: 0.06em 0.06em 0 var(--color-ink);
+  rotate: 1.4deg;
+}
+
+.poster-line-2 {
+  background: var(--pop-2);
+  color: var(--on-pop-2);
+  box-shadow: 0.06em 0.06em 0 var(--color-ink);
+  rotate: -0.6deg;
+}
+
+.sticker {
+  display: inline-block;
+  align-self: flex-start;
+  padding: 0.35rem 0.75rem;
+  border: 2px solid var(--color-ink);
+  background: var(--pop-2);
+  color: var(--on-pop-2);
+}
+
+.hero-poster .eyebrow.sticker {
+  color: var(--on-pop-2);
+  letter-spacing: 0.04em;
+  font-size: 0.95rem;
+}
+
+.sticker-tilt-l {
+  rotate: -4deg;
+}
+
+.poster-tag {
+  align-self: flex-start;
+  padding: 0.2rem 0.7rem;
+  background: var(--pop-3);
+  color: var(--on-pop-3);
+  font-family: var(--font-accent);
+  font-size: clamp(1.3rem, 4cqi, 2.3rem);
+  rotate: -2.5deg;
+}
+
+.poster-foot {
+  display: grid;
+  gap: 1rem;
+  max-width: 34rem;
+  margin-top: 0.8rem;
+  padding: 1rem 1.2rem 1.2rem;
+  border: 3px solid var(--color-ink);
+  background: var(--color-surface);
+  box-shadow: 6px 6px 0 var(--pop-1);
+}
+
+.site .poster-lede {
+  color: var(--color-ink);
+}
+
+.poster-sticker {
+  position: absolute;
+  display: none;
+  padding: 0.55rem 0.85rem;
+  border: 3px solid var(--color-ink);
+  border-radius: 999px;
+  font-family: var(--font-accent);
+  font-size: 0.9rem;
+  text-transform: uppercase;
+}
+
+.poster-sticker-0 {
+  top: 12%;
+  right: 7%;
+  background: var(--pop-1);
+  color: var(--on-pop-1);
+  rotate: 8deg;
+}
+
+.poster-sticker-1 {
+  top: 34%;
+  right: 20%;
+  background: var(--pop-3);
+  color: var(--on-pop-3);
+  rotate: -10deg;
+}
+
+.poster-sticker-2 {
+  top: 20%;
+  right: 34%;
+  background: var(--pop-4);
+  color: var(--on-pop-4);
+  rotate: 5deg;
+}
+
+@container (min-width: 640px) {
+  .poster-sticker {
+    display: block;
+  }
+}
+
+.tape {
+  position: absolute;
+  width: 7rem;
+  height: 1.5rem;
+  background: color-mix(in oklab, var(--color-surface) 65%, transparent);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+}
+
+.tape-a {
+  top: 1.4rem;
+  left: 12%;
+  rotate: -8deg;
+}
+
+.tape-b {
+  bottom: 2rem;
+  right: 6%;
+  rotate: 12deg;
+}
+
+/* minimal — the subject floats in a soft blob. */
+.hero-minimal {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--spacing) * 5);
+  padding: calc(4rem * var(--space-rhythm)) var(--gutter);
+  text-align: center;
+}
+
+.blob-wrap {
+  position: relative;
+  width: clamp(12rem, 34cqi, 18rem);
+  aspect-ratio: 1;
+  margin-bottom: 0.5rem;
+}
+
+.blob {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 42% 58% 55% 45% / 48% 42% 58% 52%;
+  box-shadow: var(--shadow-elevated);
+  object-fit: cover;
+}
+
+.orb {
+  position: absolute;
+  z-index: 1;
+  aspect-ratio: 1;
+  border-radius: 50%;
+}
+
+.orb-a {
+  width: 28%;
+  top: -6%;
+  right: -9%;
+  background: var(--pop-2);
+}
+
+.orb-b {
+  width: 17%;
+  bottom: 4%;
+  left: -8%;
+  background: var(--pop-3);
+}
+
+.pill {
+  padding: 0.4rem 1rem;
+  border-radius: 999px;
+  background: var(--color-surface-alt);
+}
+
+/* mosaic — crops of the subject, image-led. */
+.hero-mosaic {
+  display: grid;
+  gap: 2.25rem;
+  align-items: center;
+  padding: calc(4rem * var(--space-rhythm)) var(--gutter);
+}
+
+@container (min-width: 760px) {
+  .hero-mosaic {
+    grid-template-columns: 0.9fr 1.1fr;
+  }
+}
+
+.mosaic {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr;
+  grid-template-rows: repeat(2, clamp(7rem, 18cqi, 13rem));
+  gap: 0.6rem;
+}
+
+.mosaic-cell {
+  border-radius: var(--radius-md);
+}
+
+.mosaic-cell-0 {
+  grid-row: 1 / 3;
+}
+
+.mosaic-cell-3 {
+  grid-column: 2 / 4;
+}
+
+/* stack — a spec sheet (technical) or a slab (brutalist). */
+.hero-stack {
+  display: grid;
+  gap: 2.25rem;
+  padding: calc(4rem * var(--space-rhythm)) var(--gutter);
+}
+
+.stack-head {
+  display: grid;
+  gap: 1rem;
+}
+
+.stack-grid {
+  display: grid;
+  gap: 1.75rem;
+}
+
+@container (min-width: 720px) {
+  .stack-grid {
+    grid-template-columns: 1.1fr 0.9fr;
+  }
+}
+
+.stack-media {
+  position: relative;
+}
+
+.stack-media .hero-photo {
+  aspect-ratio: var(--image-ratio);
+  border-radius: var(--radius-md);
+}
+
+.stack-side {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.stack-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-top: var(--rule);
+}
+
+.stack-metrics > div {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 0.2rem;
+  padding: 0.9rem 0.5rem 0.9rem 0;
+  border-bottom: var(--rule);
+}
+
+.stack-metrics dt {
+  font-family: var(--font-accent);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+}
+
+.stack-metrics dd {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-weight: var(--weight-heading);
+  font-size: clamp(1.2rem, 3.2cqi, 1.8rem);
+}
+
+/* ----------------------------------------------------------------- Features */
+
+.features-list ol {
+  display: grid;
+  max-width: 58rem;
+  margin: 0 auto;
+}
+
+.features-list li {
+  display: grid;
+  grid-template-columns: 3rem 1fr;
+  gap: 0.4rem 1.5rem;
+  padding: 1.6rem 0;
+  border-top: var(--rule);
+}
+
+.features-list li:last-child {
+  border-bottom: var(--rule);
+}
+
+.features-list li p {
+  grid-column: 2;
+  color: var(--color-ink-muted);
+}
+
+@container (min-width: 700px) {
+  .features-list li {
+    grid-template-columns: 4rem 15rem 1fr;
+    align-items: baseline;
+  }
+
+  .features-list li p {
+    grid-column: 3;
+  }
+}
+
+.site .index {
+  font-family: var(--font-accent);
+  font-style: var(--heading-style);
+  color: var(--color-ink-muted);
+}
+
+.features-list h3 {
+  font-size: clamp(1.4rem, 3.4cqi, 1.9rem);
+}
+
+.features-columns {
+  display: grid;
+  gap: 2.5rem;
+}
+
+@container (min-width: 720px) {
+  .features-columns {
+    grid-template-columns: repeat(var(--feature-cols), minmax(0, 1fr));
+  }
+}
+
+.features-columns h3 {
+  margin-bottom: 0.9rem;
+  padding-top: 0.9rem;
+  border-top: 2px solid var(--color-ink);
+  font-size: clamp(1.6rem, 4cqi, 2.2rem);
+  font-style: var(--heading-style);
+}
+
+.features-columns p {
+  color: var(--color-ink-muted);
+  font-size: 1.05rem;
+}
+
+.dropcap::first-letter {
+  float: left;
+  padding: 0.06em 0.1em 0 0;
+  font-family: var(--font-heading);
+  font-size: 3.4em;
+  line-height: 0.8;
+  color: var(--color-ink);
+}
+
+.features-cards {
+  display: grid;
+  gap: 1.25rem;
+}
+
+@container (min-width: 700px) {
+  .features-cards {
+    grid-template-columns: repeat(var(--feature-cols), minmax(0, 1fr));
+  }
+}
+
+.card {
+  overflow: clip;
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-alt);
+}
+
+.card-photo {
+  aspect-ratio: 4 / 3;
+}
+
+.card-body {
+  padding: 1.2rem 1.3rem 1.5rem;
+}
+
+.card h3 {
+  margin-bottom: 0.5rem;
+  font-size: 1.4rem;
+}
+
+.card p {
+  font-size: 0.95rem;
+  color: var(--color-ink-muted);
+}
+
+.features-stickers {
+  display: grid;
+  gap: 2.25rem 1.5rem;
+}
+
+@container (min-width: 700px) {
+  .features-stickers {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.sticker-card {
+  position: relative;
+  padding: 1.7rem 1.4rem 1.4rem;
+  border: 3px solid var(--color-ink);
+  box-shadow: 7px 7px 0 var(--color-ink);
+}
+
+.sticker-card h3 {
+  margin-bottom: 0.5rem;
+  font-size: clamp(1.8rem, 4cqi, 2.4rem);
+}
+
+.sticker-card p {
+  font-weight: 500;
+}
+
+.sticker-card-0 {
+  background: var(--pop-1);
+  color: var(--on-pop-1);
+  rotate: -2deg;
+}
+
+.sticker-card-1 {
+  background: var(--pop-2);
+  color: var(--on-pop-2);
+  rotate: 1.5deg;
+  translate: 0 0.8rem;
+}
+
+.sticker-card-2 {
+  background: var(--pop-3);
+  color: var(--on-pop-3);
+  rotate: -1deg;
+}
+
+.sticker-card-3 {
+  background: var(--pop-4);
+  color: var(--on-pop-4);
+}
+
+.sticker-card .tape {
+  top: -0.8rem;
+  left: 50%;
+  width: 5.5rem;
+  translate: -50% 0;
+  rotate: -4deg;
+}
+
+.features-bento {
+  display: grid;
+  gap: 1rem;
+}
+
+@container (min-width: 700px) {
+  .features-bento {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-auto-rows: minmax(10rem, auto);
+  }
+
+  .bento-cell-0 {
+    grid-column: span 2;
+    grid-row: span 2;
+  }
+
+  .bento-cell-1 {
+    grid-column: span 2;
+  }
+}
+
+.bento-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 1.5rem;
+  overflow: clip;
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-alt);
+}
+
+.bento-cell h3 {
+  font-size: 1.5rem;
+}
+
+.bento-cell p {
+  color: var(--color-ink-muted);
+}
+
+.bento-cell-0 {
+  justify-content: flex-end;
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+}
+
+.bento-cell-0 h3 {
+  font-size: clamp(2rem, 5cqi, 3rem);
+}
+
+.site .bento-cell-0 :is(p, .index) {
+  color: inherit;
+}
+
+.bento-photo {
+  min-height: 10rem;
+  padding: 0;
+}
+
+.features-spec .spec-head,
+.features-spec .spec-row {
+  display: grid;
+  grid-template-columns: 4.5rem 1fr;
+  gap: 0.3rem 1.5rem;
+  padding: 1rem 0;
+  border-bottom: var(--rule);
+}
+
+.spec-head {
+  font-family: var(--font-accent);
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+}
+
+.spec-head span:last-child {
+  display: none;
+}
+
+.spec-row p {
+  grid-column: 2;
+  color: var(--color-ink-muted);
+  font-size: 0.95rem;
+}
+
+.spec-row h3 {
+  font-size: 1.15rem;
+}
+
+@container (min-width: 700px) {
+  .features-spec .spec-head,
+  .features-spec .spec-row {
+    grid-template-columns: 6rem 14rem 1fr;
+    align-items: baseline;
+  }
+
+  .spec-head span:last-child {
+    display: block;
+  }
+
+  .spec-row p {
+    grid-column: 3;
+  }
+}
+
+/* ---------------------------------------------------------------- Interludes */
+
+.interlude-quote blockquote {
+  max-width: 50rem;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.interlude-quote blockquote p {
+  font-family: var(--font-heading);
+  font-weight: var(--weight-heading);
+  font-style: var(--heading-style);
+  font-size: calc(clamp(1.6rem, 4.4cqi, 2.9rem) * var(--type-scale));
+  line-height: 1.18;
+  text-wrap: balance;
+}
+
+.interlude-quote footer {
+  margin-top: 1.2rem;
+  font-family: var(--font-accent);
+  font-size: 0.85rem;
+  color: var(--color-ink-muted);
+}
+
+.interlude-marquee {
+  overflow: clip;
+  padding: 0.9rem 0;
+  border-block: 3px solid var(--color-ink);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+}
+
+.marquee-track {
+  display: flex;
+  width: max-content;
+}
+
+.marquee-run {
+  display: flex;
+  gap: 2rem;
+  padding-right: 2rem;
+  font-family: var(--font-heading);
+  font-weight: var(--weight-heading);
+  font-size: clamp(1.4rem, 4cqi, 2.6rem);
+  line-height: 1.1;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.marquee-run i {
+  margin-left: 2rem;
+  font-style: normal;
+}
+
+/* A loop, so it only runs for people who have not asked for less motion; the
+   blanket reduced-motion rule would stop it after one pass anyway. */
+@media (prefers-reduced-motion: no-preference) {
+  .marquee-track {
+    animation: marquee 32s linear infinite;
+  }
+}
+
+@keyframes marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.interlude-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1.5rem;
+}
+
+.interlude-metrics strong {
+  display: block;
+  font-family: var(--font-heading);
+  font-weight: var(--weight-heading);
+  font-size: clamp(1.7rem, 5.5cqi, 3.4rem);
+  line-height: 1;
+}
+
+.interlude-metrics span {
+  display: block;
+  margin-top: 0.5rem;
+  font-family: var(--font-accent);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+}
+
+.interlude-strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.5rem;
+  height: clamp(7rem, 18cqi, 12rem);
+  padding: 0 var(--gutter);
+}
+
+.strip-cell {
+  border-radius: var(--radius-md);
+}
+
+/* ------------------------------------------------------------------ Closings */
+
+.closing-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: clamp(1.75rem, 5cqi, 3.5rem);
+  border-radius: var(--radius-xl);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+}
+
+.closing-banner h2 {
+  max-width: 20ch;
+  font-size: clamp(1.6rem, 4.2cqi, 2.7rem);
+}
+
+.closing-banner p {
+  margin-top: 0.6rem;
+}
+
+.closing-minimal {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  text-align: center;
+  border-top: var(--rule);
+}
+
+.closing-minimal h2 {
+  font-size: clamp(1.8rem, 5cqi, 3.2rem);
+  font-style: var(--heading-style);
+}
+
+.text-link {
+  font-family: var(--font-accent);
+  font-size: 1.05rem;
+  color: var(--color-ink);
+  text-decoration: underline;
+  text-decoration-color: var(--color-accent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.35em;
+}
+
+.closing-poster {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.2rem;
+  text-align: center;
+  border-block: 4px solid var(--color-ink);
+  background: var(--pop-2);
+  color: var(--on-pop-2);
+}
+
+.closing-poster h2 {
+  max-width: 14ch;
+  font-size: calc(clamp(2.4rem, 9cqi, 6rem) * var(--type-scale));
+  line-height: 0.95;
+}
+
+.site .sticker-button {
+  rotate: -3deg;
+  border: 3px solid var(--color-ink);
+  box-shadow: 5px 5px 0 var(--color-ink);
+}
+
+/* ========================================================================
+ * Archetypes — the same components, shaped by the photograph's character.
+ * ===================================================================== */
+
+/* serene: nothing competes with the image; everything is quiet and spaced. */
+:root[data-layout='serene'] .site .btn-primary {
+  box-shadow: none;
+}
+
+:root[data-layout='serene'] .site-nav {
+  border-bottom-color: transparent;
+}
+
+/* editorial: a masthead and rules, like print. */
+:root[data-layout='editorial'] .site-nav {
+  border-bottom: 3px double var(--color-line);
+}
+
+:root[data-layout='editorial'] .site-nav .brand {
+  font-size: 1.5rem;
+  font-style: var(--heading-style);
+}
+
+/* gallery: minimal chrome, the image carries the page. */
+:root[data-layout='gallery'] .site-nav {
+  border-bottom: none;
+}
+
+/* technical: a blueprint grid, hairlines and mono labels. */
+:root[data-layout='technical'] .site {
+  background-image:
+    linear-gradient(color-mix(in oklab, var(--color-line) 55%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in oklab, var(--color-line) 55%, transparent) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+:root[data-layout='technical'] .site .eyebrow::before {
+  content: '▸ ';
+  color: var(--color-accent);
+}
+
+:root[data-layout='technical'] .stack-media {
+  padding: 0.5rem;
+  border: var(--rule);
+  background: var(--color-surface);
+}
+
+:root[data-layout='technical'] .site .btn {
+  font-family: var(--font-accent);
+  font-size: 0.85rem;
+}
+
+/* brutalist: slab type, heavy rules, square everything, offset shadows. */
+:root[data-layout='brutalist'] .site {
+  --rule: 3px solid var(--color-ink);
+}
+
+:root[data-layout='brutalist'] .site .display {
+  font-size: calc(clamp(2.8rem, 11cqi, 8rem) * var(--type-scale));
+  line-height: 0.9;
+}
+
+:root[data-layout='brutalist'] .site .section + .section {
+  border-top: var(--rule);
+}
+
+:root[data-layout='brutalist'] .stack-media .hero-photo {
+  border: 4px solid var(--color-ink);
+  box-shadow: 10px 10px 0 var(--color-ink);
+}
+
+:root[data-layout='brutalist'] .bento-cell {
+  border: 3px solid var(--color-ink);
+}
+
+:root[data-layout='brutalist'] .site .btn,
+:root[data-layout='street'] .site .btn {
+  font-family: var(--font-heading);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  border: 3px solid var(--color-ink);
+  box-shadow: 4px 4px 0 var(--color-ink);
+}
+
+/* soft: pills, blobs, bounce. */
+:root[data-layout='soft'] .site .btn {
+  border-radius: 999px;
+}
+
+:root[data-layout='soft'] .bento-cell-2 {
+  background: var(--pop-2);
+  color: var(--on-pop-2);
+}
+
+:root[data-layout='soft'] .bento-cell-2 :is(p, .index) {
+  color: inherit;
+}
+
+/* street: black nav bar, tilted marquee, grit everywhere. */
+:root[data-layout='street'] .site-nav {
+  border-bottom: none;
+  background: var(--color-ink);
+  color: var(--color-surface);
+}
+
+:root[data-layout='street'] .site-nav ul {
+  color: inherit;
+}
+
+:root[data-layout='street'] .interlude-marquee {
+  margin: 1.5rem -1rem;
+  rotate: -1.5deg;
+}
+
+:root[data-layout='street'] .site-footer {
+  border-top: 3px solid var(--color-ink);
+}

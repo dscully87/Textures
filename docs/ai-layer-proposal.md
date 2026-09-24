@@ -1,10 +1,16 @@
 # Proposal: an AI layer for Textures
 
-**Status:** implemented. See the README for how it is configured, and
-`lib/patch.ts` for the guards.
-**Shape as built:** CLIP zero-shot on device → DeepSeek (`deepseek-v4-pro`) over
-labels + measurements → validated token patch. The photograph never leaves the
-browser, so §8 below is stronger than proposed rather than weaker.
+> **Superseded.** This proposal describes the first AI layer — CLIP zero-shot
+> classification on the device, then a text-only model (DeepSeek) reasoning over
+> labels and measurements, with the photograph never leaving the browser. It has
+> been replaced by Gemini reading the photograph directly (see the README's
+> "The AI layer"). The reasons, in short: a model that only sees a handful of
+> CLIP labels cannot tell a lake from a graffiti wall any better than the pixel
+> statistics can; CLIP was a large model download in the browser on first use;
+> and the route accepted
+> ready-made prompts from the client, which made it an open proxy for the API
+> key. The guard rails below — colour by swatch index, contrast repairs, motion
+> tiers and gates, the perceptual-hash cache — carried over unchanged.
 
 ---
 
