@@ -10,6 +10,7 @@
  */
 
 import { useEngine } from './ThemeEngine';
+import { ThemeKitActions } from './ThemeKit';
 import { describeMood, paletteContrast } from '@/lib/synthesize';
 import { MOOD_AXES } from '@/lib/mood';
 import { Palette } from '@/lib/tokens';
@@ -79,6 +80,8 @@ export function ThemeInspector() {
           </span>
         )}
       </header>
+
+      <ThemeKitActions />
 
       <section>
         <h3 className="metric mb-3 uppercase tracking-[0.14em] text-ink-muted">
