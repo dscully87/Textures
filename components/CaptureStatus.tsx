@@ -5,8 +5,7 @@
 import { useEngine } from './ThemeEngine';
 
 const STAGE_LABEL: Record<string, string> = {
-  classifying: 'Recognising the subject…',
-  reading: 'Interpreting…',
+  reading: 'Gemini is reading the photo…',
   settled: 'Settled',
   skipped: '',
 };
@@ -20,7 +19,12 @@ const STAGE_LABEL: Record<string, string> = {
  * explanation when it doesn't arrive.
  */
 const SKIP_LABEL: Record<string, string> = {
-  'no-api-key': 'No API key in this environment',
+  'no-api-key': 'No GEMINI_API_KEY in this environment',
+  'rate-limited': 'Too many readings — try again in a few minutes',
+  'forbidden-origin': 'Request refused: not from this site',
+  'invalid-image': 'The photo could not be encoded for upload',
+  'payload-too-large': 'The upload was too large',
+  'malformed-request': 'The request was malformed',
   'no-swatches': 'No usable colour in frame',
   timeout: 'Model timed out — theme unchanged',
   'network-error': 'Could not reach the model',
@@ -38,8 +42,8 @@ function skipLabel(reason?: string): string {
   if (provider) {
     const status = provider[1];
     if (status === '401' || status === '403') return 'Model rejected the API key';
-    if (status === '404') return 'Model not found — check DEEPSEEK_MODEL';
-    if (status === '402') return 'Model account has no credit';
+    if (status === '404') return 'Model not found — check GEMINI_MODEL';
+    if (status === '400') return 'Gemini rejected the request';
     if (status === '429') return 'Rate limited by the model provider';
     return `Model provider returned ${status}`;
   }
@@ -80,9 +84,8 @@ export function CaptureStatus() {
       </p>
 
       {/*
-        Opt-in, off by default. The label says what actually leaves the device,
-        which is not the photograph: CLIP runs in this browser, and only the
-        resulting labels and the pixel measurements are sent on.
+        Opt-in, off by default. The label says plainly what leaves the device:
+        with this on, a 512px copy of the photograph goes to Google's Gemini API.
       */}
       <label className="metric flex cursor-pointer items-center gap-2 rounded-full bg-ink/[0.06] px-3 py-1.5 text-ink-muted">
         <input
@@ -92,7 +95,7 @@ export function CaptureStatus() {
           className="size-3.5 accent-[var(--color-primary)]"
         />
         AI refinement
-        <span className="opacity-60">— sends measurements, not the photo</span>
+        <span className="opacity-60">— sends a 512px copy of the photo to Google Gemini</span>
       </label>
 
       {status !== 'idle' && (

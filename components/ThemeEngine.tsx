@@ -281,7 +281,7 @@ export function ThemeEngine({ children }: { children: React.ReactNode }) {
         const run = new AbortController();
         refineRun.current = run;
 
-        void refineTheme(nextTokens, nextAnalysis, pixels, preview, {
+        void refineTheme(nextTokens, nextAnalysis, pixels, { source: frame, width, height }, {
           signal: run.signal,
           onStage: (stage) => {
             if (!run.signal.aborted) setRefineStage(stage);

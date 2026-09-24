@@ -82,6 +82,8 @@ export function fontStack(key: FontKey): string {
 
 export interface FontPairing {
   id: string;
+  /** One line on the register it strikes — read by the model and shown in the inspector. */
+  description: string;
   heading: FontKey;
   body: FontKey;
   /** Stickers, eyebrows, labels, marquees — the "third voice". */
@@ -104,6 +106,7 @@ export interface FontPairing {
 export const FONT_PAIRINGS: FontPairing[] = [
   {
     id: 'still-serif',
+    description: 'hushed, airy editorial serif with italic accents; still water, fog, open sky',
     heading: 'instrumentSerif', body: 'inter', accent: 'instrumentSerif',
     headingWeight: 400, bodyWeight: 300, tracking: -0.01, leading: 1.75, scale: 1.12,
     uppercase: false, italic: true,
@@ -112,6 +115,7 @@ export const FONT_PAIRINGS: FontPairing[] = [
   },
   {
     id: 'old-style',
+    description: 'classical Garamond; stone, candlelight, history, craft',
     heading: 'cormorant', body: 'manrope', accent: 'cormorant',
     headingWeight: 500, bodyWeight: 400, tracking: -0.005, leading: 1.7, scale: 1.14,
     uppercase: false, italic: false,
@@ -120,6 +124,7 @@ export const FONT_PAIRINGS: FontPairing[] = [
   },
   {
     id: 'couture',
+    description: 'high-contrast Didone; luxury, fashion, polished and precise',
     heading: 'bodoni', body: 'inter', accent: 'bodoni',
     headingWeight: 500, bodyWeight: 400, tracking: -0.02, leading: 1.65, scale: 1.1,
     uppercase: false, italic: true,
@@ -128,6 +133,7 @@ export const FONT_PAIRINGS: FontPairing[] = [
   },
   {
     id: 'soft-serif',
+    description: 'warm, soft-edged serif; food, wood, handmade, friendly print',
     heading: 'fraunces', body: 'inter', accent: 'fraunces',
     headingWeight: 600, bodyWeight: 400, tracking: -0.015, leading: 1.7, scale: 1.06,
     uppercase: false, italic: false,
@@ -136,6 +142,7 @@ export const FONT_PAIRINGS: FontPairing[] = [
   },
   {
     id: 'display-serif',
+    description: 'bold display serif; vivid, confident, gallery and magazine covers',
     heading: 'dmSerif', body: 'dmSans', accent: 'dmSans',
     headingWeight: 400, bodyWeight: 400, tracking: -0.02, leading: 1.65, scale: 1.1,
     uppercase: false, italic: false,
@@ -144,6 +151,7 @@ export const FONT_PAIRINGS: FontPairing[] = [
   },
   {
     id: 'rounded',
+    description: 'rounded and bubbly; sweets, toys, playful and glossy',
     heading: 'fredoka', body: 'nunito', accent: 'fredoka',
     headingWeight: 600, bodyWeight: 500, tracking: -0.01, leading: 1.7, scale: 1.02,
     uppercase: false, italic: false,
@@ -152,6 +160,7 @@ export const FONT_PAIRINGS: FontPairing[] = [
   },
   {
     id: 'expressive',
+    description: 'wide, quirky grotesk; art, culture, contemporary and a little odd',
     heading: 'syne', body: 'manrope', accent: 'syne',
     headingWeight: 700, bodyWeight: 400, tracking: -0.03, leading: 1.6, scale: 1.04,
     uppercase: false, italic: false,
@@ -160,6 +169,7 @@ export const FONT_PAIRINGS: FontPairing[] = [
   },
   {
     id: 'swiss',
+    description: 'tight neo-grotesk; neutral, precise, product and interface',
     heading: 'interTight', body: 'inter', accent: 'jetbrainsMono',
     headingWeight: 650, bodyWeight: 400, tracking: -0.035, leading: 1.6, scale: 1,
     uppercase: false, italic: false,
@@ -168,6 +178,7 @@ export const FONT_PAIRINGS: FontPairing[] = [
   },
   {
     id: 'grotesk',
+    description: 'geometric grotesk with mono labels; engineering, hardware, industrial',
     heading: 'spaceGrotesk', body: 'inter', accent: 'jetbrainsMono',
     headingWeight: 600, bodyWeight: 400, tracking: -0.03, leading: 1.55, scale: 1,
     uppercase: false, italic: false,
@@ -176,6 +187,7 @@ export const FONT_PAIRINGS: FontPairing[] = [
   },
   {
     id: 'terminal',
+    description: 'monospace headlines; circuits, code, data, dense technical detail',
     heading: 'jetbrainsMono', body: 'inter', accent: 'jetbrainsMono',
     headingWeight: 700, bodyWeight: 400, tracking: -0.04, leading: 1.55, scale: 0.92,
     uppercase: false, italic: false,
@@ -184,6 +196,7 @@ export const FONT_PAIRINGS: FontPairing[] = [
   },
   {
     id: 'wide',
+    description: 'extended geometric sans; architectural, bold, confident and modern',
     heading: 'unbounded', body: 'manrope', accent: 'unbounded',
     headingWeight: 700, bodyWeight: 400, tracking: -0.03, leading: 1.6, scale: 0.9,
     uppercase: false, italic: false,
@@ -192,6 +205,7 @@ export const FONT_PAIRINGS: FontPairing[] = [
   },
   {
     id: 'slab-block',
+    description: 'heavy uppercase block type; concrete, structure, brutalist weight',
     heading: 'archivoBlack', body: 'archivo', accent: 'jetbrainsMono',
     headingWeight: 400, bodyWeight: 400, tracking: -0.02, leading: 1.5, scale: 1.02,
     uppercase: true, italic: false,
@@ -200,6 +214,7 @@ export const FONT_PAIRINGS: FontPairing[] = [
   },
   {
     id: 'poster',
+    description: 'condensed uppercase poster type with marker accents; graffiti, street, protest, loud',
     heading: 'anton', body: 'archivo', accent: 'permanentMarker',
     headingWeight: 400, bodyWeight: 500, tracking: 0.005, leading: 1.5, scale: 1.3,
     uppercase: true, italic: false,
@@ -208,6 +223,7 @@ export const FONT_PAIRINGS: FontPairing[] = [
   },
   {
     id: 'signage',
+    description: 'chunky signage caps; arcades, neon, pop, fun and loud',
     heading: 'bungee', body: 'dmSans', accent: 'bungee',
     headingWeight: 400, bodyWeight: 500, tracking: 0, leading: 1.6, scale: 0.9,
     uppercase: true, italic: false,

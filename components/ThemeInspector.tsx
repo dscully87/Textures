@@ -63,7 +63,7 @@ const ROLE_LABEL: Record<string, string> = {
 };
 
 export function ThemeInspector() {
-  const { tokens, analysis, capture } = useEngine();
+  const { tokens, analysis, capture, refinement } = useEngine();
   const contrast = paletteContrast(tokens.palette);
 
   return (
@@ -176,6 +176,44 @@ export function ThemeInspector() {
             <Bar label="banding" value={analysis.composition.banding} />
             <Bar label="hue families" value={analysis.colour.hueCount / 4} />
           </div>
+        </section>
+      )}
+
+      {refinement && (
+        <section>
+          <h3 className="metric mb-3 uppercase tracking-[0.14em] text-ink-muted">
+            Gemini reading — {Math.round(refinement.reading.confidence * 100)}% confident
+            {refinement.cached ? ' · cached' : ` · ${refinement.elapsedMs}ms`}
+          </h3>
+          <p className="text-sm">{refinement.reading.subject}</p>
+          {refinement.report.applied.length > 0 && (
+            <ul className="mt-3 flex flex-col gap-1">
+              {refinement.report.applied.map((line) => (
+                <li key={line} className="metric text-ink-muted">
+                  {line}
+                </li>
+              ))}
+            </ul>
+          )}
+          {/* Gates that fired: the model asked for something the photograph could not support. */}
+          {refinement.report.refused.length > 0 && (
+            <ul className="mt-3 flex flex-col gap-1">
+              {refinement.report.refused.map((line) => (
+                <li key={line} className="metric text-ink">
+                  ✕ {line}
+                </li>
+              ))}
+            </ul>
+          )}
+          {refinement.reading.disagreements.length > 0 && (
+            <ul className="mt-3 flex flex-col gap-1 border-l-2 border-accent pl-3">
+              {refinement.reading.disagreements.map((line) => (
+                <li key={line} className="text-sm text-ink-muted">
+                  {line}
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
       )}
 

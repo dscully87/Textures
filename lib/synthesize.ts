@@ -42,8 +42,10 @@ import {
   Palette,
   PatternKind,
   PopColour,
+  SectionPlan,
   TypographyTokens,
 } from './tokens';
+import type { SiteCopy } from './copy';
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * Math.min(1, Math.max(0, t));
 const round = (v: number, places = 3) => Number(v.toFixed(places));
@@ -597,7 +599,7 @@ export function buildTypography(pairing: FontPairing, mood: Mood = NEUTRAL_MOOD)
   };
 }
 
-function buildSpace(mood: Mood) {
+export function buildSpace(mood: Mood) {
   // Airy subjects breathe; packed ones compress. Section rhythm moves further
   // than the base unit so the difference reads at page scale.
   return {
@@ -786,59 +788,105 @@ function describe(mood: Mood, archetype: LayoutArchetype, typography: Typography
   return `${article} ${summary} subject — a ${archetype} page set in ${typography.label}, with a ${strategy} palette.`;
 }
 
-export function synthesize(analysis: ImageAnalysis): DesignTokens {
+/**
+ * Every choice that shapes a theme. `synthesize` makes them heuristically from
+ * the measurements; the AI layer (`lib/patch.ts`) makes some of them from what
+ * the model saw. Both go through `assemble`, so a model-made choice gets
+ * exactly the same contrast repairs, clamps and derivations as a measured one.
+ */
+export interface Decisions {
+  mood: Mood;
+  strategy: ColourStrategy;
+  roles?: PaletteRoles;
+  weights?: Palette['weights'];
+  archetype: LayoutArchetype;
+  sections?: SectionPlan;
+  pairing: FontPairing;
+  /** Classified from the analysis when absent. */
+  finish?: Finish;
+  motion?: MotionTokens;
+  pattern?: Omit<DesignTokens['pattern'], 'image'>;
+  textureOpacity?: number;
+  copy?: SiteCopy;
+  description?: string;
+  confidence?: number;
+}
+
+/** The heuristic decisions: what the measurements alone say. */
+export function decide(analysis: ImageAnalysis): Decisions {
   const mood = computeMood(analysis);
-  const strategy = chooseStrategy(analysis, mood);
-  const sourceIsDark = chooseScheme(analysis, strategy);
-  const palette = buildPalette(analysis, mood, strategy, sourceIsDark);
-
-  const geometry = classifyGeometry(angularity(analysis));
   const archetype = chooseArchetype(mood);
+  return {
+    mood,
+    strategy: chooseStrategy(analysis, mood),
+    archetype,
+    pairing: choosePairing(mood, archetype),
+  };
+}
 
-  const paletteSaturation = (hexToHsl(palette.primary).s + hexToHsl(palette.accent).s) / 2;
-  const finish = classifyFinish(analysis, paletteSaturation, mood);
-
-  // A little more roundness for organic subjects, a little less for structured.
-  const unit = Math.round(RADIUS_BY_ARCHETYPE[archetype] * lerp(1.25, 0.75, mood.order));
-
-  const patternKind = classifyPattern(analysis, geometry);
+function measuredPattern(analysis: ImageAnalysis, geometry: Geometry) {
   // The analysis buffer is 256px on its *long* edge; scale the detected pitch
   // into something legible as a CSS-space tile. Scaling by width alone shrank
   // every motif from a portrait photo.
   const longEdge = Math.max(analysis.width, analysis.height);
-  const period = Math.round(
-    Math.min(96, Math.max(8, analysis.periodicity.period * (longEdge / 256) * 2.2)),
-  );
-
-  const surface = buildSurface(analysis, palette, finish, sourceIsDark, mood);
-  const typography = buildTypography(choosePairing(mood, archetype), mood);
-
-  const pattern = {
-    kind: patternKind,
-    period,
+  return {
+    kind: classifyPattern(analysis, geometry),
+    period: Math.round(Math.min(96, Math.max(8, analysis.periodicity.period * (longEdge / 256) * 2.2))),
     angle: Math.round(analysis.edges.dominantAngle),
     opacity: round(Math.min(0.12, analysis.periodicity.strength * 0.2), 3),
-    image: buildPattern({
-      kind: patternKind,
-      period,
-      angle: analysis.periodicity.angle,
-      color: palette.accent,
-      weight: lerp(0.05, 0.14, analysis.edges.strength),
-    }),
   };
+}
+
+/** Turn decisions into a complete, guarded token set. */
+export function assemble(analysis: ImageAnalysis, d: Decisions): DesignTokens {
+  const { mood, archetype, strategy } = d;
+  const sourceIsDark = chooseScheme(analysis, strategy);
+  const built = buildPalette(analysis, mood, strategy, sourceIsDark, d.roles);
+  const palette = d.weights ? { ...built, weights: d.weights } : built;
+
+  const geometry = classifyGeometry(angularity(analysis));
+  const paletteSaturation = (hexToHsl(palette.primary).s + hexToHsl(palette.accent).s) / 2;
+  const finish = d.finish ?? classifyFinish(analysis, paletteSaturation, mood);
+
+  // A little more roundness for organic subjects, a little less for structured.
+  const unit = Math.round(RADIUS_BY_ARCHETYPE[archetype] * lerp(1.25, 0.75, mood.order));
+
+  const typography = buildTypography(d.pairing, mood);
+  const layout = buildLayout(archetype, mood);
+  if (d.sections) layout.sections = { ...d.sections };
+
+  const patternSpec = d.pattern ?? measuredPattern(analysis, geometry);
+  const pattern = {
+    ...patternSpec,
+    image:
+      patternSpec.kind === 'none'
+        ? 'none'
+        : buildPattern({
+            kind: patternSpec.kind,
+            period: patternSpec.period,
+            angle: analysis.periodicity.angle,
+            color: palette.accent,
+            weight: lerp(0.05, 0.14, analysis.edges.strength),
+          }),
+  };
+
+  const texture = buildTexture(mood, sourceIsDark);
+  if (d.textureOpacity !== undefined) texture.tileOpacity = round(d.textureOpacity, 3);
 
   // How much of this theme was actually driven by the photo, versus by our
   // fallbacks. Shown in the inspector so the result is never a black box.
-  const confidence = round(
-    Math.min(
-      1,
-      0.35 +
-        Math.min(0.25, analysis.edges.density * 2) +
-        analysis.colorfulness * 0.25 +
-        Math.min(0.15, analysis.texture.dynamicRange * 0.2),
-    ),
-    2,
-  );
+  const confidence =
+    d.confidence ??
+    round(
+      Math.min(
+        1,
+        0.35 +
+          Math.min(0.25, analysis.edges.density * 2) +
+          analysis.colorfulness * 0.25 +
+          Math.min(0.15, analysis.texture.dynamicRange * 0.2),
+      ),
+      2,
+    );
 
   return {
     mood,
@@ -852,20 +900,24 @@ export function synthesize(analysis: ImageAnalysis): DesignTokens {
     },
     typography,
     space: buildSpace(mood),
-    surface,
-    texture: buildTexture(mood, sourceIsDark),
+    surface: buildSurface(analysis, palette, finish, sourceIsDark, mood),
+    texture,
     pattern,
     mesh: buildMesh(palette, analysis, sourceIsDark),
-    motion: buildMotion(analysis, classifyMotion(analysis, mood)),
-    layout: buildLayout(archetype, mood),
-    copy: ARCHETYPE_COPY[archetype],
+    motion: d.motion ?? buildMotion(analysis, classifyMotion(analysis, mood)),
+    layout,
+    copy: d.copy ?? ARCHETYPE_COPY[archetype],
     meta: {
       geometry,
-      description: describe(mood, archetype, typography, strategy),
+      description: d.description ?? describe(mood, archetype, typography, strategy),
       confidence,
       sourceIsDark,
     },
   };
+}
+
+export function synthesize(analysis: ImageAnalysis): DesignTokens {
+  return assemble(analysis, decide(analysis));
 }
 
 /** Neutral theme shown before the first capture. */
