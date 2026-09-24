@@ -31,8 +31,8 @@ export default function Home() {
           </div>
 
           {/* overflow-clip, not overflow-hidden: a hidden-overflow box is a scroll
-              container, and the site's scroll-driven motion would attach to it —
-              a box that never scrolls — and freeze. */}
+              container, and the site's scroll-driven motion would bind to it — a
+              box that never scrolls — and sit at its end state, never playing. */}
           <div className="panel morph overflow-clip">
             <GeneratedSite />
           </div>

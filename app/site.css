@@ -9,8 +9,10 @@
  *
  * Wrappers use `overflow: clip`, never `hidden`: an `overflow: hidden` element
  * is a scroll container, and scroll-driven animations (`view()`) attach to the
- * nearest one — a box that never scrolls — which freezes them at their first
- * keyframe.
+ * nearest one. Bound to a box that never scrolls, every block counts as already
+ * in view, so it sits at its final keyframe and the reveal silently never plays
+ * (checked in Chromium: an off-screen block reads opacity 1 under `hidden`,
+ * 0 under `clip`).
  */
 
 .site {

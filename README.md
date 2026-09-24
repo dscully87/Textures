@@ -1,15 +1,15 @@
 # Textures
 
-A visual-first dynamic CSS and React engine. Point a camera at an object; the
-site restyles itself from that object's color, material, geometry and motif.
-
-The markup never changes. A capture rewrites ~30 CSS custom properties on
-`<html>`, and because those property names *are* Tailwind v4's theme namespaces,
-every `bg-primary`, `rounded-lg`, `font-heading` and `p-6` already in the DOM
-retargets in the same frame. No component re-renders to restyle the page.
+Photograph anything and get a website that feels like it. A still lake becomes a
+quiet, full-bleed page in a hushed serif and a palette of water blues; a graffiti
+wall becomes a paste-up poster in condensed capitals, stickers and a tilted
+ticker. Colour, texture, typography, layout, motion and copy are all read from the
+one picture, and the result exports as a theme kit for your own site.
 
 ```
-[ Camera / upload ] → [ Pixel analysis ] → [ Token synthesis ] → [ CSS variable injection ] → [ Live DOM ]
+[ Camera / upload ] → [ Pixel analysis ] → [ Mood ] → [ Decisions ] → [ Tokens ] → [ Live page + theme kit ]
+                                                  ↑
+                             optional: Gemini reads the photo itself
 ```
 
 ## Running it
@@ -17,144 +17,102 @@ retargets in the same frame. No component re-renders to restyle the page.
 ```bash
 npm install
 npm run dev      # http://localhost:3000
-npm test         # 38 pipeline tests, no browser needed
+npm test         # pipeline, calibration, AI-layer and route tests; no browser, no network
 npm run build
 ```
 
 Camera capture needs a secure context. `localhost` counts as one; a LAN IP does
 not, so on a phone you either need HTTPS or the upload path — which is always
-available and is not a degraded mode.
+available and offers both the photo library and the camera.
 
-## Architecture
+## How a photograph becomes a site
 
-| Path | Responsibility |
-| --- | --- |
-| `lib/color.ts` | Color space conversion, WCAG luminance and contrast, contrast repair |
-| `lib/quantize.ts` | Median-cut quantization; dominant swatches with population and chroma stats |
-| `lib/analyze.ts` | Sobel edges, orientation statistics, texture/specular metrics, motif autocorrelation |
-| `lib/synthesize.ts` | The opinionated half: measurements → design tokens |
-| `lib/patterns.ts` | Procedural tiling SVGs and fractal-noise grain, as data URIs |
-| `lib/tokens.ts` | The token contract and `applyTokens`, the only bridge to the DOM |
-| `lib/vision/labels.ts` | The closed label sets CLIP scores against |
-| `lib/vision/classify.ts` | Zero-shot classification, in the browser |
-| `lib/vision/phash.ts` | Difference hashing, so a repeated subject reuses its reading |
-| `lib/ai/prompt.ts` | Builds the reasoning request from labels + measurements |
-| `lib/ai/reading.ts` | The reading contract and its validator |
-| `lib/ai/refine.ts` | Orchestrates classify → reason → patch, client-side |
-| `lib/patch.ts` | Applies a reading to the tokens, and refuses what it shouldn't |
-| `app/api/read/route.ts` | The only network hop. Holds the API key |
-| `components/ThemeEngine.tsx` | Runs the pipeline, owns capture state |
-| `components/CameraCapture.tsx` | `getUserMedia` with upload/drag-drop fallback |
-| `components/GeneratedSite.tsx` | The generated surface — entirely static class names |
-| `components/ThemeInspector.tsx` | Shows every measurement and decision |
+**Measure.** `lib/analyze.ts` downsizes the frame to 256px (in halving steps, so a
+4000px phone photo and a 500px one measure the same) and records edges, texture,
+repeats, how colour is distributed (hue families, warmth) and where things are
+(negative space, horizontal banding, centre weight). `lib/quantize.ts` extracts
+swatches with their real coverage.
 
-`lib/` is dependency-free and environment-agnostic: the same code runs in the
-browser during capture and under Node in tests. Nothing in `lib/analyze.ts`
-knows what CSS is.
+**Mood.** `lib/mood.ts` condenses those numbers into five axes — energy (calm ↔
+loud), warmth, order (organic ↔ structured), density (airy ↔ packed) and polish
+(raw ↔ refined) — calibrated so real photographs spread across them. Every design
+decision reads the same five numbers, which keeps the decisions coherent and puts
+different subjects far apart.
 
-## What the photograph decides
+**Decide.** `lib/synthesize.ts` picks, by distance in mood space:
 
-**Palette.** Median-cut quantization over a 256px buffer yields swatches ranked
-by chroma, mid-lightness and coverage. The winner becomes `primary`; the most
-chromatic swatch at a genuinely different hue *with real coverage* becomes
-`accent`. Neutrals inherit a trace of the subject's hue, so a wooden object
-yields warm greys and a steel one yields cool greys. Overall brightness picks a
-light or dark scheme.
+| Decision | Options | Where |
+| --- | --- | --- |
+| Layout | serene, editorial, gallery, technical, brutalist, soft, street — each a different hero, feature layout, interlude and close | `lib/layouts.ts` |
+| Type | 14 pairings over 20 self-hosted families, constrained to those that suit the layout | `lib/fonts.ts` |
+| Colour | tonal, accent, pop or moody, all through the same contrast repairs | `lib/synthesize.ts` |
+| Motion | still, drift, shimmer, bloom, settle, glitch, weave | `lib/synthesize.ts` |
+| Copy | written per layout, in that layout's voice | `lib/copy.ts` |
 
-**Readability is enforced, not hoped for.** `ink` and `inkMuted` are
-lightness-corrected against the generated surface until they clear 7:1 and 4.5:1;
-`accent` clears the 3:1 floor WCAG sets for non-text UI. Mid-luminance colors are
-the trap — a hue near 18% relative luminance fails 4.5:1 against *both* black and
-white, so when no label color can rescue a primary, the engine moves the primary
+**Texture.** `lib/imagery.ts` turns the photograph into material: a duotone in
+the palette's colours for poster heroes, and a seamless tile cut from the frame's
+most textured region and mirror-tiled behind sections — so concrete reads as
+concrete and water as water.
+
+**Render.** Colour, type, radius, spacing, grain, texture and motion reach the DOM
+as CSS custom properties and data attributes (`lib/tokens.ts`), so they restyle in
+one frame. Structure — which sections the page is built from — is a React choice
+(`components/GeneratedSite.tsx`, `components/site/`), styled per layout in
+`app/site.css`.
+
+**Readability is enforced, not hoped for.** Body text clears 7:1 against the
+surface and 4.5:1 against the alternate surface, muted text 4.5:1 on both, the
+accent 3:1 (it colours large display type and UI), and every label on a coloured
+block 4.5:1. A mid-luminance colour that fails against both black and white moves
 itself rather than shipping an unreadable button.
 
-**Geometry → radii.** Edge-orientation entropy separates machined subjects
-(energy concentrated in a few angular bins) from organic ones (energy spread
-across every bin), with axis-alignment as a secondary signal. That score drives a
-single radius unit from `0px` to `30px`, and every corner in the interface
-follows.
+### Calibration
 
-**Material → surfaces.** Specular highlights are measured as small, bright,
-*desaturated* regions — a bright yellow wall is not a highlight, a white glint
-is, and the response deliberately falls off past a few percent coverage so a
-blown-out frame does not read as glossy. Gloss also requires *smoothness*
-between the highlights: coarse aggregate throws just as many blown-out pixels as
-polished glass, so roughness carries a heavy veto. The resulting finish sets
-backdrop blur, fill translucency, hairline alpha, shadow depth and grain.
-
-**Motif → SVG.** Directional autocorrelation of the edge map finds repeats. It
-scores *prominence* — peak minus the curve's mean — not raw correlation, because
-a striped subject correlates near-perfectly at every lag along the stripe
-direction: that means "nothing changes", not "something repeats". Diagonals must
-beat the best axis direction by a clear margin before a motif is called diagonal,
-since a diagonal shift aliases onto axis-aligned repeats.
-
-**Visual weight → type and density.** Geometry picks the voice (technical,
-neutral, editorial, friendly) and dynamic range modulates weight, tracking and
-scale. Density rides on Tailwind's `--spacing` step, so one variable rescales
-every padding, margin and gap on the page.
-
-**Material → motion.** A wavy, specular surface shimmers; coarse high-contrast
-grain glitches; a soft organic subject drifts; a machined one settles. Seven
-characters, each scored from signals already measured — and `still` is a real
-answer, taken whenever the frame carries no structure or no dynamic range,
-because a page that moves for no reason is worse than one that holds still.
-
-Restraint is structural rather than advisory. Motion runs on three tiers:
-`ambient` (page-scale, the only tier permitted to loop, and never faster than
-20s), `accent` (fires once on entry — the default), and `signature`
-(section-scale and memorable, capped at one element per page). The loud tier
-clears three gates: a written rationale, confidence above 0.7, and enough dynamic
-range in the photograph itself. A flat, quiet frame cannot produce a hyperactive
-page no matter what asks for it.
-
-The mechanism is native scroll-driven CSS (`animation-timeline`), so motion is
-one data attribute and four variables — nothing re-renders and nothing listens to
-scroll. Firefox has not shipped scroll timelines, so it gets a still page via
-`@supports`; `prefers-reduced-motion` already disables all of it.
-
-**Composition → layout.** Five archetypes (`editorial`, `technical`, `gallery`,
-`brutalist`, `soft`) plus line measure, feature column count and image ratio,
-written as `data-layout` and three variables. Without this the markup could only
-ever be recoloured, and two captures would produce the same product in different
-paint.
+`fixtures/photos/` holds ten real photographs (lake, graffiti, building, circuit
+board, fruit, sweets, cathedral, aqueduct, painting, mandrill) and
+`lib/__tests__/calibration.test.ts` holds the engine to them: the lake and the
+graffiti wall must differ on every categorical decision, and the ten must spread
+across at least six type pairings, five layouts, four motions, three finishes and
+both schemes. `CALIBRATION_REPORT=1 npm test` prints the table.
 
 ## The AI layer (optional)
 
-Off by default. With the toggle on, a capture takes one extra pass:
+Off by default. With the toggle on, each capture also asks Google's Gemini to
+read the photograph:
 
 ```
-capture ─┬─ analyzeImage       (existing, on device) ─┐
-         └─ CLIP zero-shot     (on device)            ├─▶ /api/read ─▶ model ─▶ reading
-                                                      ┘   (text only)
+capture ─┬─ analysis + deterministic theme (on device) ── painted immediately
+         └─ 512px JPEG + measurements ─▶ /api/read ─▶ Gemini ─▶ reading ─▶ patch ─▶ morph
 ```
 
-**The photograph never leaves the browser.** CLIP scores it against closed label
-sets locally, and only those labels — with confidences — plus the pixel
-measurements are sent on. There is no image in the request body.
+**The photograph leaves the device** when this is on — a 512px JPEG goes to the
+Gemini API. The toggle says so.
 
-What the model contributes is judgment, not measurement: which measured swatch is
-the *subject's* colour rather than the most saturated distractor, what proportion
-each role should occupy, which motion character the surface implies, and which
-layout archetype fits. It also returns `disagreements`, so where it overrides the
-deterministic engine it has to say why.
+What the model contributes is judgment the pixels can't supply: what the subject
+is, which of the engine's layouts, pairings and colour strategies express it,
+which measured swatch carries the subject's identity, its own reading of the
+mood (blended 50/50 with the measurement), and copy written for a plausible
+brand the photograph could be the hero image of. It returns `disagreements`, so
+where it overrides the engine it has to say why; the inspector shows them.
 
 What it is not allowed to do:
 
 | Rule | Enforced by |
 | --- | --- |
-| Never invents a colour | Palette is swatch **indices**, resolved locally; a bad index falls back |
-| Never breaks contrast | Reassigned palettes re-run `composePalette` and every contrast repair |
-| Never exceeds sane ranges | Every numeric clamped in `lib/ai/reading.ts` and `lib/patch.ts` |
-| Never gets `signature` for free | Rationale required, plus confidence and dynamic-range gates |
-| Never loops fast | Looping is `ambient`-only, floor of 20s |
-| Never blocks the page | Deterministic theme paints first; a patch lands later or not at all |
+| Never invents a colour | Palette roles are swatch **indices**, resolved locally |
+| Never breaks contrast | Readings become the same `Decisions` the engine makes and go through the same `assemble()` |
+| Never exceeds sane ranges | Every number clamped and every string capped in `lib/ai/reading.ts` |
+| Never gets `signature` motion for free | Written rationale, confidence ≥ 0.7 and real dynamic range (`lib/patch.ts`) |
+| Never loops fast | Looping is `ambient`-only, 20s floor |
+| Never blocks the page | The deterministic theme paints first; the reading lands later or not at all |
 | Never breaks determinism | Readings cached by perceptual hash — same subject, same site |
 
-Every failure mode — no key, provider down, timeout, malformed JSON, wrong shape —
-resolves to the deterministic theme, which is a complete product on its own. That
-is also why `npm test` needs no network: `lib/` is still pure, and the guards are
-tested with fixtures.
+The route is not a proxy. The browser sends an image and a structured payload
+of numbers, hex colours and enum values; `parseMeasurements` rejects anything
+else, and the prompt is written on the server. Requests must also be
+same-origin, a real JPEG under 350 KB, and within a per-address rate limit
+(20 per 10 minutes, per server instance — add a platform rate-limit rule in
+front of `/api/read` for a public deploy).
 
 ### Configuration
 
@@ -162,56 +120,81 @@ tested with fixtures.
 cp .env.example .env.local   # then add your key
 ```
 
-`DEEPSEEK_API_KEY` is read server-side in `app/api/read/route.ts`. On Vercel, set
-it under **Settings → Environment Variables** and pull it locally with
-`vercel env pull .env.local`.
+| Variable | |
+| --- | --- |
+| `GEMINI_API_KEY` | Server-side only. Create one at https://aistudio.google.com/apikey. |
+| `GEMINI_MODEL` | Optional; defaults to `gemini-2.5-flash`. Any Gemini model that takes images and structured JSON output works. |
 
-**Never prefix it with `NEXT_PUBLIC_`.** That inlines the value into the client
-bundle at build time, making it readable by every visitor — and once a key ships
-that way, rotating it is the only remedy.
+**Never prefix either with `NEXT_PUBLIC_`.** That inlines the value into the
+client bundle, readable by every visitor.
 
-`DEEPSEEK_MODEL` and `DEEPSEEK_BASE_URL` are optional overrides.
+If the photographs people capture are private, use a key from a project with
+billing enabled: Google may use free-tier inputs to improve its products. A
+reading is about 3k input tokens (instructions ~1.4k, response schema ~1.3k,
+image ~260, measurements ~250) and up to ~2k output tokens including a
+1k-token thinking budget — around half a cent per capture at Gemini 2.5 Flash
+list prices; check Google's pricing page for current rates. Repeat captures of
+the same subject are served from the perceptual-hash cache and cost nothing.
 
 ### Verifying a deploy
 
-Refinement is designed to fail invisibly — right for a visitor, useless for
-whoever just wired it up. Two things make it diagnosable.
-
-**Is the key in this environment?** `GET /api/read` answers without calling the
-provider, so it costs nothing and there is nothing to abuse:
+`GET /api/read` answers without calling the provider:
 
 ```bash
 curl https://<your-deployment>/api/read
-# { "configured": true, "keyLength": 35, "model": "deepseek-v4-pro", ... }
+# { "configured": true, "keyLength": 39, "model": "gemini-2.5-flash", ... }
 ```
 
 `configured: false` after adding the variable almost always means the deploy
-predates it — Vercel applies environment changes to *new* builds only, so
-redeploy.
+predates it — Vercel applies environment changes to new builds only. With the
+toggle on, a failed reading prints its reason under the status line and passes
+through the provider's own message on a 4xx, so a wrong model id and an invalid
+key are distinguishable.
 
-**Why didn't it refine?** With the toggle on, a failed capture prints the
-reason under the status line, and passes through the provider's own message on
-a 4xx. That distinction matters: a wrong `DEEPSEEK_MODEL`, an invalid key and an
-account with no credit are all bare 4xx from outside, and three different fixes.
+## Theme kit
 
-> `npm audit` reports advisories in `onnxruntime-node` and `sharp`. Those are the
-> Node halves of transformers.js; we only ever run the browser build, and both are
-> listed in `serverExternalPackages` so they stay out of the server bundle.
+"Download theme kit" in the inspector zips:
 
-## Polish techniques
+| File | |
+| --- | --- |
+| `theme.css` | Every token as a custom property, plus a small starter layer |
+| `tailwind-theme.css` | A Tailwind v4 `@theme` block — `bg-primary`, `font-heading`, `rounded-lg` follow the kit |
+| `tokens.json` | W3C design tokens, with mood, layout and motion as extensions |
+| `README.md` | The reading, the palette and its contrast ratios |
 
-- **Glassmorphism** — translucent fills, `backdrop-filter` blur, a low-opacity
-  white hairline and layered shadows, all keyed to measured specularity.
-- **Procedural grain** — an SVG `feTurbulence` overlay at 2–9% opacity, its base
-  frequency scaled by roughness, so flat color never looks sterile.
-- **Gradient mesh** — secondary and tertiary colors as multi-point radial
-  gradients that drift slowly behind content.
-- **Adaptive radii** — sharp subjects yield square interfaces, round subjects
-  yield pill-shaped ones.
+Fonts are exported as Google Fonts family names with a matching `@import`.
 
-Every generated surface transitions on a shared clock (`--morph`), so a capture
-reads as one coordinated change rather than a dozen independent flickers.
-`prefers-reduced-motion` is honored.
+## Motion and accessibility
+
+Motion is native scroll-driven CSS (`animation-timeline`), gated behind
+`prefers-reduced-motion: no-preference` — shortening `animation-duration` does
+not stop a scroll-driven animation, so the gate is what honours the setting.
+Wrappers use `overflow: clip` rather than `hidden`: a hidden-overflow box is a
+scroll container, and `view()` timelines bound to a box that never scrolls sit
+at their end state and never play. Browsers without scroll timelines get a still
+page.
+
+## Architecture
+
+| Path | Responsibility |
+| --- | --- |
+| `lib/analyze.ts` | Edges, texture, repeats, colour distribution, composition; resolution-independent downscaling |
+| `lib/quantize.ts` | Swatches with real coverage and chroma |
+| `lib/mood.ts` | The five mood axes and nearest-option selection |
+| `lib/synthesize.ts` | `decide()` and `assemble()`: mood → layout, type, palette, surface, motion |
+| `lib/layouts.ts`, `lib/fonts.ts`, `lib/copy.ts` | The option libraries |
+| `lib/imagery.ts` | Duotone and texture tile from the photograph |
+| `lib/tokens.ts` | The token contract and `applyTokens` |
+| `lib/export.ts` | The theme kit |
+| `lib/ai/prompt.ts` | Measurement payload, its validator, the prompt and the response schema |
+| `lib/ai/reading.ts` | The reading contract and its validator |
+| `lib/ai/guard.ts` | Same-origin, rate-limit and image checks |
+| `lib/ai/refine.ts` | Client-side orchestration and caching |
+| `lib/patch.ts` | Reading → decisions, with the motion gates |
+| `app/api/read/route.ts` | The only network hop; holds the API key |
+| `components/ThemeEngine.tsx` | Runs the pipeline, loads fonts, renders imagery |
+| `components/GeneratedSite.tsx`, `components/site/` | The generated site's sections |
+| `components/ThemeInspector.tsx` | Every measurement, decision and AI reading |
 
 ## Notes
 
